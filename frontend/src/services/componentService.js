@@ -51,6 +51,12 @@ const componentService = {
     return response.data;
   },
 
+  /** Web-search image/datasheet/missing metadata for a component. */
+  enrich: async (id) => {
+    const response = await api.post(`/components/${id}/enrich`);
+    return response.data;
+  },
+
   transactions: async (id) => {
     const response = await api.get(`/components/${id}/transactions`);
     return response.data;

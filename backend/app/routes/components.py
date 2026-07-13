@@ -311,7 +311,7 @@ def enrich_component_route(id):
     component = Component.query.get_or_404(id)
     from app.ingest.enrich import enrich_component
     try:
-        result = enrich_component(component.id)
+        result = enrich_component(component.id, force=True)
     except Exception as e:
         current_app.logger.error(f'Enrich failed for component {id}: {e}')
         return {'error': f'Enrichment failed: {e}'}, 502

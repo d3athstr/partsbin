@@ -25,6 +25,7 @@ const ComponentDetailPage = () => {
   const [delta, setDelta] = useState('');
   const [note, setNote] = useState('');
   const [actionError, setActionError] = useState('');
+  const [enrichNote, setEnrichNote] = useState('');
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['component', id],
@@ -73,6 +74,32 @@ const ComponentDetailPage = () => {
     adjustMutation.mutate({ d, n: note });
   };
 
+  const enrichMutation = useMutation({
+    mutationFn: () => componentService.enrich(id),
+    onSuccess: (res) => {
+      invalidate();
+      setActionError('');
+      const r = res?.enriched || {};
+      const found = [
+        r.image && 'image',
+        r.datasheet && 'datasheet',
+        r.manufacturer && 'manufacturer',
+        r.mpn && 'part number',
+        r.description && 'description',
+        r.specs > 0 && `${r.specs} spec${r.specs === 1 ? '' : 's'}`,
+      ].filter(Boolean);
+      setEnrichNote(
+        found.length
+          ? `Enrichment added: ${found.join(', ')}.`
+          : 'Nothing new found on the web for this component.'
+      );
+    },
+    onError: (err) => {
+      setEnrichNote('');
+      setActionError(errMsg(err, 'Enrichment failed'));
+    },
+  });
+
   const handleDelete = () => {
     if (window.confirm(`Delete "${component.name}"? This cannot be undone.`)) {
       deleteMutation.mutate();
@@ -108,6 +135,14 @@ const ComponentDetailPage = () => {
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => enrichMutation.mutate()}
+            disabled={enrichMutation.isPending}
+            className="btn-secondary"
+            title="Search the web for an image, datasheet, and missing specs (never overwrites existing data)"
+          >
+            {enrichMutation.isPending ? 'Searching web...' : 'Enrich'}
+          </button>
           <Link to={`/inventory/${id}/edit`} className="btn-secondary">
             Edit
           </Link>
@@ -122,6 +157,9 @@ const ComponentDetailPage = () => {
       </div>
 
       {actionError && <div className="alert-error">{actionError}</div>}
+      {enrichNote && (
+        <div className="card py-2 px-3 text-sm text-dark-textMuted">{enrichNote}</div>
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Left column: image + stock */}

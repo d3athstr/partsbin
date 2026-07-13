@@ -31,12 +31,17 @@ inventory system. Use web search to locate:
 2. datasheet_url - a DIRECT PDF URL of the manufacturer datasheet, from the
    manufacturer or a major distributor. Use null when a datasheet is not
    meaningful (hookup wire, enclosures, assortment kits, tools).
+3. metadata - manufacturer, manufacturer part number, a one-sentence
+   description, and technical specs (short key/value strings) you can verify
+   from what you find.
 
 Respond with ONLY one JSON object, no prose, no markdown fences:
-{"image_url": string|null, "datasheet_url": string|null}
+{"image_url": string|null, "datasheet_url": string|null,
+ "manufacturer": string|null, "mpn": string|null, "description": string|null,
+ "specs": {}}
 
-If you cannot find a confident, directly-linkable asset, use null - never guess
-or fabricate URLs."""
+If you cannot find a confident, directly-linkable asset or verifiable fact,
+use null / omit the spec - never guess or fabricate."""
 
 IMAGE_TYPES = {
     'image/jpeg': 'jpg',
@@ -95,10 +100,20 @@ def _download_image(component, url):
     if resp.status_code != 200:
         return None
     ext = IMAGE_TYPES.get((resp.headers.get('Content-Type') or '').split(';')[0].strip())
-    if not ext:
-        return None
     data = resp.raw.read(MAX_IMAGE_BYTES + 1, decode_content=True)
     if not data or len(data) > MAX_IMAGE_BYTES:
+        return None
+    if not ext:
+        # CDNs often serve images as octet-stream; trust the magic bytes
+        if data[:3] == b'\xff\xd8\xff':
+            ext = 'jpg'
+        elif data[:8] == b'\x89PNG\r\n\x1a\n':
+            ext = 'png'
+        elif data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+            ext = 'webp'
+        elif data[:6] in (b'GIF87a', b'GIF89a'):
+            ext = 'gif'
+    if not ext:
         return None
 
     rel_dir = os.path.join('components', str(component.id))
@@ -125,19 +140,26 @@ def _datasheet_ok(url):
         return False
 
 
-def enrich_component(component_id):
-    """Find + attach image/datasheet for one component (skips human-set assets).
+def enrich_component(component_id, force=False):
+    """Find + attach image/datasheet/metadata for one component.
 
-    Returns {'image': bool, 'datasheet': bool} for what was newly attached.
+    Only ever fills fields that are empty (and merges NEW spec keys) - existing
+    values are never overwritten. With force=False the whole call is skipped
+    when image + datasheet are already set (background/CLI economy); force=True
+    (the manual Enrich button) always searches to fill remaining metadata.
+
+    Returns a dict of what was newly attached.
     """
+    empty = {'image': False, 'datasheet': False, 'manufacturer': False,
+             'mpn': False, 'description': False, 'specs': 0}
     component = Component.query.get(component_id)
     if component is None:
-        return {'image': False, 'datasheet': False}
-    if component.image and component.datasheet_url:
-        return {'image': False, 'datasheet': False}
+        return empty
+    if not force and component.image and component.datasheet_url:
+        return empty
 
     assets = find_assets(component)
-    result = {'image': False, 'datasheet': False}
+    result = dict(empty)
 
     if not component.image and assets.get('image_url'):
         try:
@@ -154,6 +176,23 @@ def enrich_component(component_id):
             component.datasheet_url = assets['datasheet_url'][:500]
             result['datasheet'] = True
 
-    if result['image'] or result['datasheet']:
+    for field, limit in (('manufacturer', 100), ('mpn', 100), ('description', None)):
+        value = assets.get(field)
+        if value and not getattr(component, field):
+            value = str(value).strip()
+            setattr(component, field, value[:limit] if limit else value)
+            result[field] = True
+
+    new_specs = assets.get('specs')
+    if isinstance(new_specs, dict) and new_specs:
+        specs = dict(component.specs or {})
+        for key, value in new_specs.items():
+            if key not in specs and isinstance(value, (str, int, float)) and str(value).strip():
+                specs[key] = str(value).strip()[:100]
+                result['specs'] += 1
+        if result['specs']:
+            component.specs = specs
+
+    if any(result.values()):
         db.session.commit()
     return result
