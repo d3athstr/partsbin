@@ -126,6 +126,28 @@ def get_component(id):
         }
         for line in component.project_links
     ]
+
+    from app.models.order import Order, OrderItem
+    order_items = (
+        OrderItem.query.filter_by(component_id=component.id)
+        .join(Order)
+        .order_by(Order.order_date.desc().nullslast(), Order.id.desc())
+        .limit(50)
+        .all()
+    )
+    data['orders'] = [
+        {
+            'order_id': it.order_id,
+            'vendor': it.order.vendor,
+            'vendor_order_no': it.order.vendor_order_no,
+            'order_date': it.order.order_date.isoformat() if it.order.order_date else None,
+            'status': it.order.status,
+            'qty': it.qty,
+            'unit_price': float(it.unit_price) if it.unit_price is not None else None,
+            'raw_title': it.raw_title,
+        }
+        for it in order_items
+    ]
     return data, 200
 
 
@@ -280,6 +302,20 @@ def upload_component_image(id):
         db.session.rollback()
         current_app.logger.error(f'Failed to save component image: {e}')
         return {'error': 'Failed to save image'}, 500
+
+
+@components_bp.route('/<int:id>/enrich', methods=['POST'])
+@login_required
+def enrich_component_route(id):
+    """Web-search an image + datasheet for this component (skips human-set assets)"""
+    component = Component.query.get_or_404(id)
+    from app.ingest.enrich import enrich_component
+    try:
+        result = enrich_component(component.id)
+    except Exception as e:
+        current_app.logger.error(f'Enrich failed for component {id}: {e}')
+        return {'error': f'Enrichment failed: {e}'}, 502
+    return {'enriched': result, 'component': component.to_dict()}, 200
 
 
 @components_bp.route('/<int:id>/transactions', methods=['GET'])

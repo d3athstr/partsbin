@@ -1,0 +1,159 @@
+"""Web enrichment: find a product image + datasheet URL for a component.
+
+Uses Claude's server-side web_search tool to locate a direct product-image URL
+and (where meaningful) a manufacturer/distributor datasheet PDF, downloads the
+image into the uploads tree, and stores the datasheet URL on the component.
+
+Called in a background thread after auto-create, from the per-component API
+endpoint, and from `flask enrich run` sweeps. Never overwrites assets a human
+already set.
+"""
+import ipaddress
+import json
+import os
+import socket
+from urllib.parse import urlparse
+
+import requests
+from flask import current_app
+
+from app import db
+from app.models.component import Component
+from app.ingest.claude_parser import MODEL, _client, _extract_json
+
+SEARCH_SYSTEM = """You find reference assets for electronic components in an \
+inventory system. Use web search to locate:
+
+1. image_url - a DIRECT image file URL (.jpg/.jpeg/.png/.webp/.gif) showing the
+   product itself. Prefer manufacturer or distributor product photos (Adafruit,
+   SparkFun, DigiKey, Mouser, LCSC, Seeed, Espressif...) over marketplace
+   collages with text overlays.
+2. datasheet_url - a DIRECT PDF URL of the manufacturer datasheet, from the
+   manufacturer or a major distributor. Use null when a datasheet is not
+   meaningful (hookup wire, enclosures, assortment kits, tools).
+
+Respond with ONLY one JSON object, no prose, no markdown fences:
+{"image_url": string|null, "datasheet_url": string|null}
+
+If you cannot find a confident, directly-linkable asset, use null - never guess
+or fabricate URLs."""
+
+IMAGE_TYPES = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+HTTP_HEADERS = {'User-Agent': 'Mozilla/5.0 (PartsBin inventory; +https://parts.example.com)'}
+
+
+def _url_is_safe(url):
+    """https only, and the host must not resolve into private address space"""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme != 'https' or not parsed.hostname:
+            return False
+        for info in socket.getaddrinfo(parsed.hostname, 443):
+            if ipaddress.ip_address(info[4][0]).is_private:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def find_assets(component):
+    """Ask Claude (with web search) for image/datasheet URLs. Returns a dict."""
+    query = ' '.join(filter(None, (component.manufacturer, component.mpn, component.name)))
+    response = _client().messages.create(
+        model=MODEL,
+        max_tokens=2000,
+        system=SEARCH_SYSTEM,
+        tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4}],
+        messages=[{
+            'role': 'user',
+            'content': (
+                f'Component: {query}\n'
+                f'Category: {component.category}\n'
+                f'Specs: {json.dumps(component.specs or {})}'
+            ),
+        }],
+    )
+    # With server tools the answer is the LAST text block
+    text = ''
+    for block in response.content:
+        if block.type == 'text':
+            text = block.text
+    return _extract_json(text) or {}
+
+
+def _download_image(component, url):
+    """Download an image and save it under uploads/components/<id>/. Returns rel path or None."""
+    if not _url_is_safe(url):
+        return None
+    resp = requests.get(url, headers=HTTP_HEADERS, timeout=20, stream=True)
+    if resp.status_code != 200:
+        return None
+    ext = IMAGE_TYPES.get((resp.headers.get('Content-Type') or '').split(';')[0].strip())
+    if not ext:
+        return None
+    data = resp.raw.read(MAX_IMAGE_BYTES + 1, decode_content=True)
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        return None
+
+    rel_dir = os.path.join('components', str(component.id))
+    abs_dir = os.path.join(current_app.config['UPLOAD_FOLDER'], rel_dir)
+    os.makedirs(abs_dir, exist_ok=True)
+    filename = f'web.{ext}'
+    with open(os.path.join(abs_dir, filename), 'wb') as f:
+        f.write(data)
+    return os.path.join(rel_dir, filename)
+
+
+def _datasheet_ok(url):
+    """Cheap validation that the URL really serves a PDF"""
+    if not _url_is_safe(url):
+        return False
+    try:
+        resp = requests.get(url, headers=HTTP_HEADERS, timeout=15, stream=True)
+        if resp.status_code != 200:
+            return False
+        if 'pdf' in (resp.headers.get('Content-Type') or '').lower():
+            return True
+        return resp.raw.read(5, decode_content=True).startswith(b'%PDF')
+    except Exception:
+        return False
+
+
+def enrich_component(component_id):
+    """Find + attach image/datasheet for one component (skips human-set assets).
+
+    Returns {'image': bool, 'datasheet': bool} for what was newly attached.
+    """
+    component = Component.query.get(component_id)
+    if component is None:
+        return {'image': False, 'datasheet': False}
+    if component.image and component.datasheet_url:
+        return {'image': False, 'datasheet': False}
+
+    assets = find_assets(component)
+    result = {'image': False, 'datasheet': False}
+
+    if not component.image and assets.get('image_url'):
+        try:
+            rel_path = _download_image(component, assets['image_url'])
+        except Exception as e:
+            current_app.logger.warning(f'enrich image {component_id}: {e}')
+            rel_path = None
+        if rel_path:
+            component.image = rel_path
+            result['image'] = True
+
+    if not component.datasheet_url and assets.get('datasheet_url'):
+        if _datasheet_ok(assets['datasheet_url']):
+            component.datasheet_url = assets['datasheet_url'][:500]
+            result['datasheet'] = True
+
+    if result['image'] or result['datasheet']:
+        db.session.commit()
+    return result

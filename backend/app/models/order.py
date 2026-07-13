@@ -88,6 +88,9 @@ class OrderItem(db.Model):
     unit_price = db.Column(db.Numeric(10, 2), nullable=True)
 
     match_status = db.Column(db.String(20), nullable=False, default='unmatched')  # one of MATCH_STATUSES
+    # True when qty already counts physical units (pack size folded in at parse
+    # time); guards against multiplying again in auto-create.
+    qty_is_units = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
     suggested_component_id = db.Column(db.Integer, db.ForeignKey('component.id'), nullable=True)
     component_id = db.Column(db.Integer, db.ForeignKey('component.id'), nullable=True)
 

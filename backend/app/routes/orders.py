@@ -341,9 +341,31 @@ def auto_create_components(id):
                                 'name': component.name, 'category': component.category})
 
             # Multi-packs: "100pcs ..." qty 1 should land 100 units at receive
+            # (skip when the parse already folded pack size into qty)
             units = comp_def.get('units_per_item', 1) if comp_def else 1
-            if units > 1:
+            if units > 1 and not item.qty_is_units:
                 item.qty = (item.qty or 1) * units
+            item.qty_is_units = True
+
+        # Importing an order means putting its parts in inventory: when every
+        # item resolved, receive the order right here (same audited path as
+        # POST /receive) so qty_on_hand updates without a second click.
+        received = False
+        if not failed and order.status != 'received':
+            unresolved = [it for it in order.items
+                          if it.match_status not in ('confirmed', 'ignored')]
+            if not unresolved:
+                for it in order.items:
+                    if it.match_status == 'confirmed' and it.component_id:
+                        adjust_stock(
+                            it.component, it.qty, 'order_received',
+                            user_id=current_user.id,
+                            order_item_id=it.id,
+                            note=f'{order.vendor} order {order.vendor_order_no or order.id}',
+                        )
+                order.status = 'received'
+                order.received_at = datetime.utcnow()
+                received = True
 
         db.session.commit()
     except Exception as e:
@@ -351,7 +373,25 @@ def auto_create_components(id):
         current_app.logger.error(f'Auto-create components failed: {e}')
         return {'error': 'Failed to create components'}, 500
 
+    # Web enrichment (image + datasheet) for the new components, off-request
+    if created:
+        from threading import Thread
+        app_obj = current_app._get_current_object()
+        new_ids = [c['component_id'] for c in created]
+
+        def _enrich_bg():
+            with app_obj.app_context():
+                from app.ingest.enrich import enrich_component
+                for cid in new_ids:
+                    try:
+                        enrich_component(cid)
+                    except Exception as e:
+                        app_obj.logger.warning(f'enrich component {cid}: {e}')
+
+        Thread(target=_enrich_bg, daemon=True).start()
+
     return {'created': created, 'linked': linked, 'failed': failed,
+            'received': received,
             'order': order.to_dict(include_items=True)}, 200
 
 

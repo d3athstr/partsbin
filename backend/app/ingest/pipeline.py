@@ -16,7 +16,7 @@ from app.models.order import Order, OrderItem, STATUS_RANK
 from app.models.processed_message import ProcessedMessage
 from app.models.component import Component
 from app.ingest import gmail_client
-from app.ingest.matcher import suggest_component
+from app.ingest.matcher import best_match, MATCH_THRESHOLD, AUTO_CONFIRM_THRESHOLD
 
 
 def _message_date(message):
@@ -56,15 +56,21 @@ def _upsert_order(account, message, parsed):
 
         components = Component.query.all()
         for item_data in parsed['items']:
+            units = item_data.get('units_per_item', 1)
             item = OrderItem(
                 order_id=order.id,
                 raw_title=item_data['title'],
-                qty=item_data['qty'],
+                qty=item_data['qty'] * units,
+                qty_is_units=True,
                 unit_price=item_data.get('unit_price'),
             )
-            suggestion = suggest_component(item_data['title'], components=components)
-            if suggestion:
-                item.suggested_component_id = suggestion
+            match_id, score = best_match(item_data['title'], components=components)
+            if match_id and score >= AUTO_CONFIRM_THRESHOLD:
+                # Strong match to an existing component: no human needed
+                item.component_id = match_id
+                item.match_status = 'confirmed'
+            elif match_id and score >= MATCH_THRESHOLD:
+                item.suggested_component_id = match_id
                 item.match_status = 'suggested'
             db.session.add(item)
     else:
@@ -87,6 +93,36 @@ def _upsert_order(account, message, parsed):
             order.order_date = md
 
     return order
+
+
+def _maybe_auto_receive(order):
+    """Receive a delivered order automatically when every item is resolved.
+
+    Repeat purchases whose items all auto-confirmed against existing
+    components flow into stock with no human touch; anything with an
+    unmatched/suggested item stays in the review queue.
+    """
+    from app.services.stock_service import adjust_stock
+
+    if order.status != 'delivered':
+        return False
+    items = list(order.items)
+    if not items:
+        return False
+    if any(it.match_status not in ('confirmed', 'ignored') for it in items):
+        return False
+
+    for it in items:
+        if it.match_status == 'confirmed' and it.component_id:
+            adjust_stock(
+                it.component, it.qty, 'order_received',
+                user_id=None,
+                order_item_id=it.id,
+                note=f'auto-received: {order.vendor} order {order.vendor_order_no or order.id}',
+            )
+    order.status = 'received'
+    order.received_at = datetime.utcnow()
+    return True
 
 
 def run_ingest(accounts=None):
@@ -149,6 +185,8 @@ def run_ingest(accounts=None):
                         order = _upsert_order(account, message, parsed)
                         processed.order_id = order.id
                         result['orders'] += 1
+                        if _maybe_auto_receive(order):
+                            result['auto_received'] = result.get('auto_received', 0) + 1
                     else:
                         result['non_order'] += 1
 

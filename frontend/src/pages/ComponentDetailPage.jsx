@@ -4,7 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import componentService from '../services/componentService';
 import { errMsg } from '../services/api';
 import QtyText from '../components/common/QtyText';
-import { fmtDateTime } from '../utils/format';
+import { fmtDate, fmtDateTime, fmtMoney } from '../utils/format';
+import { vendorOrderUrl } from '../utils/vendors';
+import StatusChip from '../components/common/StatusChip';
 
 const nameOf = (x) => (typeof x === 'string' ? x : x?.name);
 
@@ -33,6 +35,7 @@ const ComponentDetailPage = () => {
   const component = data?.component || data || {};
   const transactions = data?.transactions || component.transactions || [];
   const usedIn = data?.used_in || component.used_in || [];
+  const orders = data?.orders || component.orders || [];
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['component', id] });
@@ -249,6 +252,62 @@ const ComponentDetailPage = () => {
               </div>
             )}
           </div>
+
+          {/* Order history */}
+          {orders.length > 0 && (
+            <div className="card">
+              <h2 className="text-lg font-semibold mb-3">Orders</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-dark-border text-dark-textMuted">
+                      <th className="text-left py-2 pr-3 font-medium">Date</th>
+                      <th className="text-left py-2 pr-3 font-medium">Vendor</th>
+                      <th className="text-left py-2 pr-3 font-medium hidden sm:table-cell">Order #</th>
+                      <th className="text-right py-2 pr-3 font-medium">Qty</th>
+                      <th className="text-right py-2 pr-3 font-medium hidden sm:table-cell">Unit $</th>
+                      <th className="text-left py-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((o, i) => (
+                      <tr key={i} className="border-b border-dark-border last:border-b-0">
+                        <td className="py-2 pr-3 text-dark-textMuted whitespace-nowrap">
+                          {fmtDate(o.order_date)}
+                        </td>
+                        <td className="py-2 pr-3 capitalize">
+                          <Link to={`/orders/${o.order_id}`} className="link">
+                            {o.vendor}
+                          </Link>
+                        </td>
+                        <td className="py-2 pr-3 font-mono text-xs hidden sm:table-cell">
+                          {vendorOrderUrl(o.vendor, o.vendor_order_no) ? (
+                            <a
+                              href={vendorOrderUrl(o.vendor, o.vendor_order_no)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="link"
+                            >
+                              {o.vendor_order_no}
+                            </a>
+                          ) : (
+                            o.vendor_order_no || '—'
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{o.qty}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums hidden sm:table-cell">
+                          {o.unit_price != null ? fmtMoney(o.unit_price) : '—'}
+                        </td>
+                        <td className="py-2">
+                          <StatusChip status={o.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Stock history */}
           <div className="card">

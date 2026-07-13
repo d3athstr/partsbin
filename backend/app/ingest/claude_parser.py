@@ -26,7 +26,9 @@ fences. The schema is:
   "order_no": string | null,    // the vendor's order number, verbatim
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
-    {"title": string, "qty": integer, "unit_price": number | null}
+    {"title": string, "qty": integer, "unit_price": number | null,
+     "units_per_item": integer}   // physical units in ONE line-item qty:
+                                  // "100Pcs 10k Resistor" -> 100, else 1
   ],
   "tracking": string | null,    // tracking number if present
   "carrier": string | null,     // carrier name if present (UPS, USPS, FedEx, ...)
@@ -39,6 +41,8 @@ Rules:
 - "Your package has shipped / is on the way" -> event "shipped".
 - "Delivered / your package arrived" -> event "delivered".
 - qty defaults to 1 when not stated. Keep item titles as written, trimmed.
+- units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
+  1 when unclear. Do NOT multiply it into qty - report them separately.
 - If is_order is false, all other fields may be null/empty."""
 
 
@@ -104,7 +108,12 @@ def _normalize(parsed):
             unit_price = float(unit_price) if unit_price is not None else None
         except (ValueError, TypeError):
             unit_price = None
-        items.append({'title': title, 'qty': qty, 'unit_price': unit_price})
+        try:
+            units = max(int(item.get('units_per_item') or 1), 1)
+        except (ValueError, TypeError):
+            units = 1
+        items.append({'title': title, 'qty': qty, 'unit_price': unit_price,
+                      'units_per_item': units})
 
     order_no = parsed.get('order_no')
 
