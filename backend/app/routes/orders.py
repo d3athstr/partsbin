@@ -4,7 +4,7 @@ from flask_login import login_required, current_user
 from app import db
 from app.models.order import Order, OrderItem, ORDER_VENDORS, ORDER_STATUSES
 from app.models.component import Component
-from app.services.stock_service import adjust_stock
+from app.services.stock_service import adjust_stock, receive_order_items
 from app.routes import paginate_query
 
 orders_bp = Blueprint('orders', __name__)
@@ -351,18 +351,14 @@ def auto_create_components(id):
         # item resolved, receive the order right here (same audited path as
         # POST /receive) so qty_on_hand updates without a second click.
         received = False
+        skipped_duplicates = 0
         if not failed and order.status != 'received':
             unresolved = [it for it in order.items
                           if it.match_status not in ('confirmed', 'ignored')]
             if not unresolved:
-                for it in order.items:
-                    if it.match_status == 'confirmed' and it.component_id:
-                        adjust_stock(
-                            it.component, it.qty, 'order_received',
-                            user_id=current_user.id,
-                            order_item_id=it.id,
-                            note=f'{order.vendor} order {order.vendor_order_no or order.id}',
-                        )
+                _, skipped_duplicates = receive_order_items(
+                    order, user_id=current_user.id,
+                )
                 order.status = 'received'
                 order.received_at = datetime.utcnow()
                 received = True
@@ -391,7 +387,7 @@ def auto_create_components(id):
         Thread(target=_enrich_bg, daemon=True).start()
 
     return {'created': created, 'linked': linked, 'failed': failed,
-            'received': received,
+            'received': received, 'skipped_duplicates': skipped_duplicates,
             'order': order.to_dict(include_items=True)}, 200
 
 
@@ -405,16 +401,9 @@ def receive_order(id):
         return {'error': 'Order has already been received'}, 400
 
     try:
-        received_items = 0
-        for item in order.items:
-            if item.match_status == 'confirmed' and item.component_id:
-                adjust_stock(
-                    item.component, item.qty, 'order_received',
-                    user_id=current_user.id,
-                    order_item_id=item.id,
-                    note=f'{order.vendor} order {order.vendor_order_no or order.id}',
-                )
-                received_items += 1
+        received_items, skipped_duplicates = receive_order_items(
+            order, user_id=current_user.id,
+        )
 
         order.status = 'received'
         order.received_at = datetime.utcnow()
@@ -422,6 +411,7 @@ def receive_order(id):
 
         data = order.to_dict(include_items=True)
         data['received_items'] = received_items
+        data['skipped_duplicates'] = skipped_duplicates
         return data, 200
     except Exception as e:
         db.session.rollback()

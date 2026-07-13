@@ -63,3 +63,55 @@ def adjust_stock(component, delta, reason, user_id=None, order_item_id=None,
     db.session.add(transaction)
     db.session.flush()
     return transaction
+
+
+def _already_received_elsewhere(item):
+    """True when this component already got stock from the same vendor order.
+
+    The same physical order can appear as multiple Order rows (it emails both
+    Don's and DeAnna's Gmail, or a re-parse) - stock must land only once per
+    (vendor, order number, component).
+    """
+    from app.models.order import Order, OrderItem
+
+    order = item.order
+    if not order.vendor_order_no or not item.component_id:
+        return False
+    return db.session.query(StockTransaction.id).join(
+        OrderItem, StockTransaction.order_item_id == OrderItem.id,
+    ).join(
+        Order, OrderItem.order_id == Order.id,
+    ).filter(
+        StockTransaction.reason == 'order_received',
+        Order.vendor == order.vendor,
+        Order.vendor_order_no == order.vendor_order_no,
+        OrderItem.component_id == item.component_id,
+        OrderItem.id != item.id,
+    ).first() is not None
+
+
+def receive_order_items(order, user_id=None, note=None):
+    """Add stock for every confirmed item on an order (idempotent per item).
+
+    Skips items whose component already received stock from the same vendor
+    order number. Does NOT set order.status / received_at - the caller owns
+    that plus the commit.
+
+    Returns (received_count, skipped_duplicates).
+    """
+    received = skipped = 0
+    note = note or f'{order.vendor} order {order.vendor_order_no or order.id}'
+    for item in order.items:
+        if item.match_status != 'confirmed' or not item.component_id:
+            continue
+        if _already_received_elsewhere(item):
+            skipped += 1
+            continue
+        adjust_stock(
+            item.component, item.qty, 'order_received',
+            user_id=user_id,
+            order_item_id=item.id,
+            note=note,
+        )
+        received += 1
+    return received, skipped

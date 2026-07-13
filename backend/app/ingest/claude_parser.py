@@ -27,8 +27,9 @@ fences. The schema is:
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
     {"title": string, "qty": integer, "unit_price": number | null,
-     "units_per_item": integer}   // physical units in ONE line-item qty:
+     "units_per_item": integer,   // physical units in ONE line-item qty:
                                   // "100Pcs 10k Resistor" -> 100, else 1
+     "is_component": boolean}     // plausibly electronics/maker inventory?
   ],
   "tracking": string | null,    // tracking number if present
   "carrier": string | null,     // carrier name if present (UPS, USPS, FedEx, ...)
@@ -37,12 +38,18 @@ fences. The schema is:
 
 Rules:
 - Marketing, recommendations, review requests, refunds, account notices: is_order=false.
+- Delivery delay / "running late" / delivery-date-changed notices: is_order=false.
 - "Your order has been placed/confirmed" -> event "ordered".
 - "Your package has shipped / is on the way" -> event "shipped".
 - "Delivered / your package arrived" -> event "delivered".
 - qty defaults to 1 when not stated. Keep item titles as written, trimmed.
 - units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
   1 when unclear. Do NOT multiply it into qty - report them separately.
+- is_component: true for anything that belongs in an electronics/maker
+  inventory - parts, modules, dev boards, sensors, batteries, wire, tools,
+  soldering/prototyping supplies, enclosures, fasteners, 3D-printing gear.
+  false for clearly unrelated goods: food, pet supplies, clothing, household,
+  toiletries, media. When unsure, use true (a human reviews).
 - If is_order is false, all other fields may be null/empty."""
 
 
@@ -113,7 +120,8 @@ def _normalize(parsed):
         except (ValueError, TypeError):
             units = 1
         items.append({'title': title, 'qty': qty, 'unit_price': unit_price,
-                      'units_per_item': units})
+                      'units_per_item': units,
+                      'is_component': bool(item.get('is_component', True))})
 
     order_no = parsed.get('order_no')
 

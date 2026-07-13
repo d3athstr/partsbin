@@ -64,6 +64,11 @@ def _upsert_order(account, message, parsed):
                 qty_is_units=True,
                 unit_price=item_data.get('unit_price'),
             )
+            if not item_data.get('is_component', True):
+                # Dog treats et al: never part of inventory, never reviewed
+                item.match_status = 'ignored'
+                db.session.add(item)
+                continue
             match_id, score = best_match(item_data['title'], components=components)
             if match_id and score >= AUTO_CONFIRM_THRESHOLD:
                 # Strong match to an existing component: no human needed
@@ -73,6 +78,13 @@ def _upsert_order(account, message, parsed):
                 item.suggested_component_id = match_id
                 item.match_status = 'suggested'
             db.session.add(item)
+
+        # An order with nothing inventory-relevant on it disappears entirely
+        if parsed['items'] and all(
+            not it.get('is_component', True) for it in parsed['items']
+        ):
+            order.status = 'ignored'
+            order.notes = 'auto-ignored: no electronics/maker items'.strip()
     else:
         # Status only ever moves forward, and receipt stays a human action
         if (order.status != 'received'
@@ -102,7 +114,7 @@ def _maybe_auto_receive(order):
     components flow into stock with no human touch; anything with an
     unmatched/suggested item stays in the review queue.
     """
-    from app.services.stock_service import adjust_stock
+    from app.services.stock_service import receive_order_items
 
     if order.status != 'delivered':
         return False
@@ -112,14 +124,10 @@ def _maybe_auto_receive(order):
     if any(it.match_status not in ('confirmed', 'ignored') for it in items):
         return False
 
-    for it in items:
-        if it.match_status == 'confirmed' and it.component_id:
-            adjust_stock(
-                it.component, it.qty, 'order_received',
-                user_id=None,
-                order_item_id=it.id,
-                note=f'auto-received: {order.vendor} order {order.vendor_order_no or order.id}',
-            )
+    receive_order_items(
+        order, user_id=None,
+        note=f'auto-received: {order.vendor} order {order.vendor_order_no or order.id}',
+    )
     order.status = 'received'
     order.received_at = datetime.utcnow()
     return True
@@ -161,7 +169,12 @@ def run_ingest(accounts=None):
                     # guard keeps it out of Claude even if the query misses one.
                     sender_l = (message.get('sender') or '').lower()
                     subject_l = (message.get('subject') or '').lower()
-                    if 'pharmacy' in sender_l or 'amazon pharmacy' in subject_l:
+                    is_delay_notice = any(k in subject_l for k in (
+                        'delay', 'running late', 'arriving late',
+                        'delivery date has changed', 'new delivery date',
+                    ))
+                    if 'pharmacy' in sender_l or 'amazon pharmacy' in subject_l \
+                            or is_delay_notice:
                         db.session.add(ProcessedMessage(
                             gmail_account=account,
                             message_id=message['id'],
