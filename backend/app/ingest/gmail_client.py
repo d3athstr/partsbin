@@ -130,12 +130,21 @@ def build_flow(state=None):
 def get_auth_url(user):
     """Return (authorization_url, state, code_verifier) for a re-auth flow"""
     flow = build_flow()
+    extra = {}
+    # Pin the Google account when we know it: skips the account chooser,
+    # which is where DeAnna's consent kept dying with Google's generic
+    # "something went wrong" (2026-07-13).
+    known_email = (load_tokens().get(user, {}) or {}).get('email') \
+        or os.getenv(f'REAUTH_EMAIL_{user.upper()}')
+    if known_email:
+        extra['login_hint'] = known_email
     # No include_granted_scopes: the GCP client is shared with the voice
     # assistant, and merging its broader grants into this token makes Google
     # return extra scopes that oauthlib rejects as a scope change.
     auth_url, state = flow.authorization_url(
         access_type='offline',
         prompt='consent',  # force a refresh_token on every re-auth
+        **extra,
     )
     # google-auth-oauthlib >= 1.0 auto-enables PKCE: the verifier generated
     # here must be handed back to the callback's Flow or Google rejects the
