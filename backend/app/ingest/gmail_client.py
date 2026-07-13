@@ -115,19 +115,23 @@ def build_flow(state=None):
 
 
 def get_auth_url(user):
-    """Return (authorization_url, state) for a re-auth flow"""
+    """Return (authorization_url, state, code_verifier) for a re-auth flow"""
     flow = build_flow()
     auth_url, state = flow.authorization_url(
         access_type='offline',
         prompt='consent',  # force a refresh_token on every re-auth
         include_granted_scopes='true',
     )
-    return auth_url, state
+    # google-auth-oauthlib >= 1.0 auto-enables PKCE: the verifier generated
+    # here must be handed back to the callback's Flow or Google rejects the
+    # token exchange with "Missing code verifier".
+    return auth_url, state, flow.code_verifier
 
 
-def handle_callback(user, code, state=None):
+def handle_callback(user, code, state=None, code_verifier=None):
     """Exchange the OAuth code, persist the token, return the account email"""
     flow = build_flow(state=state)
+    flow.code_verifier = code_verifier
     flow.fetch_token(code=code)
     creds = flow.credentials
 

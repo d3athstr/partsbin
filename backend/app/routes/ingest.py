@@ -55,13 +55,14 @@ def oauth_login(user):
         return {'error': f'Unknown account "{user}"'}, 404
 
     try:
-        auth_url, state = get_auth_url(user)
+        auth_url, state, code_verifier = get_auth_url(user)
     except Exception as e:
         current_app.logger.error(f'Failed to build OAuth URL: {e}')
         return {'error': f'Failed to start OAuth flow: {e}'}, 500
 
     session['oauth_state'] = state
     session['oauth_user'] = user
+    session['oauth_code_verifier'] = code_verifier
     return redirect(auth_url)
 
 
@@ -80,13 +81,15 @@ def oauth_callback():
     from app.ingest.gmail_client import handle_callback
 
     try:
-        email = handle_callback(user, code=request.args.get('code'), state=state)
+        email = handle_callback(user, code=request.args.get('code'), state=state,
+                                code_verifier=session.get('oauth_code_verifier'))
     except Exception as e:
         current_app.logger.error(f'OAuth callback failed: {e}')
         return {'error': f'Failed to complete OAuth flow: {e}'}, 500
 
     session.pop('oauth_state', None)
     session.pop('oauth_user', None)
+    session.pop('oauth_code_verifier', None)
 
     return (
         f'<html><body style="font-family: sans-serif; background: #0f1419; '
