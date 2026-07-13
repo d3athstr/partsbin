@@ -198,6 +198,7 @@ const InventoryPage = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-dark-border bg-dark-elevated">
+                <th className="py-2 pl-3 w-12"></th>
                 <SortHeader label="Name" field="name" sort={sort} order={order} onSort={handleSort} />
                 <SortHeader label="Category" field="category" sort={sort} order={order} onSort={handleSort} className="hidden sm:table-cell" />
                 <SortHeader label="Location" field="location" sort={sort} order={order} onSort={handleSort} className="hidden md:table-cell" />
@@ -211,13 +212,13 @@ const InventoryPage = () => {
             <tbody>
               {isLoading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-dark-textMuted">
+                  <td colSpan={7} className="py-10 text-center text-dark-textMuted">
                     Loading...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-dark-textMuted">
+                  <td colSpan={7} className="py-10 text-center text-dark-textMuted">
                     No components match the current filters.
                   </td>
                 </tr>
@@ -228,6 +229,18 @@ const InventoryPage = () => {
                     onClick={() => navigate(`/inventory/${c.id}`)}
                     className="border-b border-dark-border last:border-b-0 hover:bg-dark-elevated cursor-pointer"
                   >
+                    <td className="py-2 pl-3">
+                      {c.image_url ? (
+                        <img
+                          src={c.image_url}
+                          alt=""
+                          loading="lazy"
+                          className="w-10 h-10 object-contain rounded bg-dark-bg"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded bg-dark-elevated" />
+                      )}
+                    </td>
                     <td className="py-2.5 px-3">
                       <p className="font-medium">{c.name}</p>
                       <p className="text-xs text-dark-textMuted">
