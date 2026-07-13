@@ -68,6 +68,15 @@ def best_match(title, components=None):
     name_tokens = len(utils.default_process(component.name).split())
     if score >= AUTO_CONFIRM_THRESHOLD and name_tokens < 3:
         score = AUTO_CONFIRM_THRESHOLD - 1
+    # Auto-confirm demands the title carry EVERY distinguishing token of the
+    # component name (hyphen-collapsed). A generic title like "ESP32
+    # Development Board" is a strict subset of "ESP32-S3 Development Board
+    # (N16R8, USB-C)" and token_set_ratio scores subsets 100 - it may be a
+    # suggestion for a human, never an unattended stock movement.
+    name_set = set(utils.default_process(component.name.replace('-', '')).split())
+    title_set = set(collapsed_title.split())
+    if not name_set <= title_set:
+        score = min(score, AUTO_CONFIRM_THRESHOLD - 1)
     # A conflicting N16R8/N8R2-style code is a different board, full stop
     if _variant_conflict(title, component.name):
         score = min(score, MATCH_THRESHOLD - 1)
