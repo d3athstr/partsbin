@@ -1,7 +1,7 @@
 from datetime import datetime
 from app import db
 
-PROJECT_STATUSES = ('planning', 'active', 'on_hold', 'done')
+PROJECT_STATUSES = ('planning', 'active', 'built', 'on_hold', 'retired')
 PROJECT_FILE_KINDS = ('image', 'pdf', 'schematic', 'firmware', 'other')
 
 

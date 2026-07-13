@@ -9,6 +9,7 @@ import ComponentPicker from '../components/common/ComponentPicker';
 import { fmtDate } from '../utils/format';
 
 const FILE_KINDS = ['image', 'pdf', 'schematic', 'firmware', 'other'];
+const PROJECT_STATUSES = ['planning', 'active', 'built', 'on_hold', 'retired'];
 
 const fileUrl = (f) => f.url || (f.filename ? `/uploads/projects/${f.filename}` : '#');
 
@@ -112,6 +113,19 @@ const ProjectDetailPage = () => {
     onError: (err) => setActionError(errMsg(err, 'Delete failed')),
   });
 
+  const statusMutation = useMutation({
+    mutationFn: (status) => projectService.update(id, { status }),
+    onSuccess: () => {
+      // Stock warnings are scoped to active projects, so a status change can
+      // add/clear dashboard warnings — refresh it too.
+      queryClient.invalidateQueries({ queryKey: ['project', id] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Failed to update status')),
+  });
+
   const handleUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -149,7 +163,19 @@ const ProjectDetailPage = () => {
           </Link>
           <div className="flex items-center gap-3 mt-1">
             <h1>{project.name}</h1>
-            <span className="chip-neutral">{(project.status || '').replace('_', ' ')}</span>
+            <select
+              value={project.status || 'planning'}
+              onChange={(e) => statusMutation.mutate(e.target.value)}
+              disabled={statusMutation.isPending}
+              className="input py-1 text-sm w-auto"
+              title="Only 'active' projects drive dashboard stock warnings"
+            >
+              {PROJECT_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.replace('_', ' ')}
+                </option>
+              ))}
+            </select>
           </div>
           {project.description && (
             <p className="text-dark-textMuted text-sm mt-1">{project.description}</p>

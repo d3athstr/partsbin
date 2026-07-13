@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { errMsg } from '../../services/api';
 
-const STATUSES = ['planning', 'active', 'on_hold', 'done'];
+const STATUSES = ['planning', 'active', 'built', 'on_hold', 'retired'];
 
 /**
  * Shared project create/edit form with side-by-side markdown preview.
