@@ -14,6 +14,8 @@ review_bp = Blueprint('review', __name__)
 ORDER_SORTS = {
     'order_date': Order.order_date,
     'vendor': Order.vendor,
+    'vendor_order_no': Order.vendor_order_no,
+    'total': Order.total,
     'status': Order.status,
     'created_at': Order.created_at,
     'updated_at': Order.updated_at,
@@ -65,6 +67,15 @@ def list_orders():
     vendor = request.args.get('vendor')
     if vendor:
         query = query.filter(Order.vendor == vendor)
+
+    q = (request.args.get('q') or '').strip()
+    if q:
+        like = f'%{q}%'
+        query = query.outerjoin(OrderItem).filter(db.or_(
+            Order.vendor_order_no.ilike(like),
+            Order.raw_subject.ilike(like),
+            OrderItem.raw_title.ilike(like),
+        )).distinct()
 
     return paginate_query(
         query, lambda o: o.to_dict(),

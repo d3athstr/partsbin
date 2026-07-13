@@ -36,9 +36,21 @@ inventory system. Use web search to locate:
    from what you find.
 
 Respond with ONLY one JSON object, no prose, no markdown fences:
-{"image_url": string|null, "datasheet_url": string|null,
+{"image_urls": [string, ...], "datasheet_url": string|null,
  "manufacturer": string|null, "mpn": string|null, "description": string|null,
  "specs": {}}
+
+image_urls: up to 3 candidate direct-image URLs, best first (marketplace CDNs
+often block hotlinking, so fallbacks matter). Empty list if none found.
+Search results rarely contain direct image links - fetch a promising product
+page (distributor or manufacturer) and take the product photo / og:image URL
+from its markup.
+
+Dev boards and modules ship in look-alike variants (flash/PSRAM codes like
+N16R8 vs N8R2, USB-C vs micro-USB, WROOM module vs third-party carrier
+board). Only report specs verified for the EXACT variant in the component
+name; a family/module datasheet is acceptable but never one for a different
+variant. When variant facts conflict across sources, omit them.
 
 If you cannot find a confident, directly-linkable asset or verifiable fact,
 use null / omit the spec - never guess or fabricate."""
@@ -70,20 +82,36 @@ def _url_is_safe(url):
 def find_assets(component):
     """Ask Claude (with web search) for image/datasheet URLs. Returns a dict."""
     query = ' '.join(filter(None, (component.manufacturer, component.mpn, component.name)))
-    response = _client().messages.create(
-        model=MODEL,
-        max_tokens=2000,
-        system=SEARCH_SYSTEM,
-        tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4}],
-        messages=[{
-            'role': 'user',
-            'content': (
-                f'Component: {query}\n'
-                f'Category: {component.category}\n'
-                f'Specs: {json.dumps(component.specs or {})}'
-            ),
-        }],
-    )
+    messages = [{
+        'role': 'user',
+        'content': (
+            f'Component: {query}\n'
+            f'Category: {component.category}\n'
+            f'Specs: {json.dumps(component.specs or {})}'
+        ),
+    }]
+    client = _client()
+    try:
+        # web_fetch lets Claude open a product page and lift the real photo URL
+        response = client.beta.messages.create(
+            model=MODEL,
+            max_tokens=2000,
+            system=SEARCH_SYSTEM,
+            tools=[
+                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 3},
+                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
+            ],
+            betas=['web-fetch-2025-09-10'],
+            messages=messages,
+        )
+    except Exception:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=2000,
+            system=SEARCH_SYSTEM,
+            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4}],
+            messages=messages,
+        )
     # With server tools the answer is the LAST text block
     text = ''
     for block in response.content:
@@ -161,15 +189,20 @@ def enrich_component(component_id, force=False):
     assets = find_assets(component)
     result = dict(empty)
 
-    if not component.image and assets.get('image_url'):
-        try:
-            rel_path = _download_image(component, assets['image_url'])
-        except Exception as e:
-            current_app.logger.warning(f'enrich image {component_id}: {e}')
-            rel_path = None
-        if rel_path:
-            component.image = rel_path
-            result['image'] = True
+    image_candidates = assets.get('image_urls') or []
+    if assets.get('image_url'):  # tolerate old single-URL shape
+        image_candidates.append(assets['image_url'])
+    if not component.image:
+        for url in image_candidates[:3]:
+            try:
+                rel_path = _download_image(component, url)
+            except Exception as e:
+                current_app.logger.warning(f'enrich image {component_id}: {e}')
+                rel_path = None
+            if rel_path:
+                component.image = rel_path
+                result['image'] = True
+                break
 
     if not component.datasheet_url and assets.get('datasheet_url'):
         if _datasheet_ok(assets['datasheet_url']):

@@ -167,7 +167,7 @@ const ComponentDetailPage = () => {
           <div className="card">
             {component.image_url || component.image ? (
               <img
-                src={component.image_url || `/uploads/components/${component.image}`}
+                src={component.image_url || `/uploads/${component.image}`}
                 alt={component.name}
                 className="w-full rounded-lg object-contain max-h-64 bg-dark-bg"
               />

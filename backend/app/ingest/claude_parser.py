@@ -3,6 +3,7 @@
 Uses the anthropic SDK (ANTHROPIC_API_KEY from env). Model defaults to
 claude-sonnet-5 and can be overridden with PARTSBIN_CLAUDE_MODEL.
 """
+import html as html_lib
 import json
 import os
 import re
@@ -137,6 +138,21 @@ def _normalize(parsed):
     }
 
 
+def _html_to_text(body):
+    """Crude HTML -> text so the char cap spends its budget on content.
+
+    AliExpress order emails are HTML-only and mostly CSS; raw-capping at
+    MAX_BODY_CHARS used to truncate before the first line item appeared.
+    """
+    body = re.sub(r'(?is)<(style|script|head)[^>]*>.*?</\1>', ' ', body)
+    body = re.sub(r'(?is)<br\s*/?>|</(p|div|tr|li|h[1-6])>', '\n', body)
+    body = re.sub(r'(?s)<[^>]+>', ' ', body)
+    body = html_lib.unescape(body)
+    body = re.sub(r'[ \t]+', ' ', body)
+    body = re.sub(r'\n\s*\n+', '\n', body)
+    return body.strip()
+
+
 def parse_order_email(subject, sender, body):
     """Parse one order email with Claude.
 
@@ -148,7 +164,10 @@ def parse_order_email(subject, sender, body):
     Returns:
         dict in the normalized order-email shape, or None when parsing failed
     """
-    body = (body or '')[:MAX_BODY_CHARS]
+    body = body or ''
+    if '<' in body and ('</' in body or '/>' in body or '<br' in body.lower()):
+        body = _html_to_text(body)
+    body = body[:MAX_BODY_CHARS]
 
     response = _client().messages.create(
         model=MODEL,

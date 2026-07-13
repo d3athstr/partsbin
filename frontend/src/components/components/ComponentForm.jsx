@@ -329,7 +329,7 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
         <h2 className="text-lg font-semibold">Image</h2>
         {isEdit && (initial.image_url || initial.image) && !imageFile && (
           <img
-            src={initial.image_url || `/uploads/components/${initial.image}`}
+            src={initial.image_url || `/uploads/${initial.image}`}
             alt={initial.name}
             className="max-h-40 rounded-lg bg-dark-bg"
           />

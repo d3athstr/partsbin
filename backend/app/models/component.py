@@ -73,6 +73,7 @@ class Component(db.Model):
             'min_qty': self.min_qty,
             'location': self.location,
             'image': self.image,
+            'image_url': f'/uploads/{self.image}' if self.image else None,
             'stock_status': self.stock_status,
         }
 
@@ -91,6 +92,7 @@ class Component(db.Model):
             'location': self.location,
             'datasheet_url': self.datasheet_url,
             'image': self.image,
+            'image_url': f'/uploads/{self.image}' if self.image else None,
             'notes': self.notes,
             'stock_status': self.stock_status,
             'tags': [t.to_dict() for t in self.tags],

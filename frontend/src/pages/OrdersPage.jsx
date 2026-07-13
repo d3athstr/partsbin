@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import orderService from '../services/orderService';
@@ -26,10 +26,46 @@ const OrdersPage = () => {
   const [status, setStatus] = useState('');
   const [vendor, setVendor] = useState('');
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const toggleSort = (key) => {
+    if (sort === key) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSort(key);
+      setSortOrder(key === 'vendor' || key === 'status' ? 'asc' : 'desc');
+    }
+    setPage(1);
+  };
+
+  const SortHeader = ({ sortKey, className = '', children }) => (
+    <th
+      className={`py-2 px-3 font-medium cursor-pointer select-none hover:text-dark-text ${className}`}
+      onClick={() => toggleSort(sortKey)}
+      title="Sort by this column"
+    >
+      {children}
+      {sort === sortKey && (
+        <span className="ml-1">{sortOrder === 'asc' ? '\u25b4' : '\u25be'}</span>
+      )}
+    </th>
+  );
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['orders', status, vendor, page],
-    queryFn: () => orderService.list({ status, vendor, page, per_page: PER_PAGE }),
+    queryKey: ['orders', status, vendor, page, sort, sortOrder, debouncedSearch],
+    queryFn: () =>
+      orderService.list({ status, vendor, page, per_page: PER_PAGE, sort, order: sortOrder, q: debouncedSearch }),
     placeholderData: (prev) => prev,
   });
 
@@ -57,6 +93,13 @@ const OrdersPage = () => {
       </div>
 
       <div className="card p-4 flex flex-col sm:flex-row gap-3">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search orders, items, order #..."
+          className="input sm:flex-1"
+        />
         <select
           value={status}
           onChange={(e) => {
@@ -100,12 +143,12 @@ const OrdersPage = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-dark-border bg-dark-elevated text-dark-textMuted">
-                <th className="text-left py-2 px-3 font-medium">Vendor</th>
-                <th className="text-left py-2 px-3 font-medium">Order #</th>
-                <th className="text-left py-2 px-3 font-medium hidden sm:table-cell">Date</th>
+                <SortHeader sortKey="vendor" className="text-left">Vendor</SortHeader>
+                <SortHeader sortKey="vendor_order_no" className="text-left">Order #</SortHeader>
+                <SortHeader sortKey="order_date" className="text-left hidden sm:table-cell">Date</SortHeader>
                 <th className="text-left py-2 px-3 font-medium hidden md:table-cell">Subject</th>
-                <th className="text-right py-2 px-3 font-medium hidden sm:table-cell">Total</th>
-                <th className="text-left py-2 px-3 font-medium">Status</th>
+                <SortHeader sortKey="total" className="text-right hidden sm:table-cell">Total</SortHeader>
+                <SortHeader sortKey="status" className="text-left">Status</SortHeader>
               </tr>
             </thead>
             <tbody>
