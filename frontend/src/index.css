@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-bg text-dark-text;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  * {
+    @apply border-dark-border;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold;
+  }
+
+  h1 {
+    @apply text-3xl;
+  }
+
+  h2 {
+    @apply text-2xl;
+  }
+
+  h3 {
+    @apply text-xl;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-dark-bg disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-dark-accent text-dark-bg hover:bg-dark-accentHover focus:ring-dark-accent;
+  }
+
+  .btn-secondary {
+    @apply btn bg-dark-surface text-dark-text hover:bg-dark-elevated border border-dark-border focus:ring-dark-accent;
+  }
+
+  .btn-danger {
+    @apply btn bg-dark-error text-dark-bg hover:opacity-90 focus:ring-dark-error;
+  }
+
+  .input {
+    @apply w-full px-4 py-2 bg-dark-surface border border-dark-border rounded-lg text-dark-text placeholder-dark-textMuted focus:outline-none focus:ring-2 focus:ring-dark-accent focus:border-transparent transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-dark-surface border border-dark-border rounded-lg p-6 shadow-lg;
+  }
+
+  .link {
+    @apply text-dark-accent hover:text-dark-accentHover transition-colors duration-200;
+  }
+
+  /* ISA-101 status chips: gray when OK, color only when abnormal */
+  .chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap;
+  }
+
+  .chip-neutral {
+    @apply chip bg-dark-elevated text-dark-textMuted border border-dark-border;
+  }
+
+  .chip-info {
+    @apply chip bg-dark-accent bg-opacity-15 text-dark-accent border border-dark-accent border-opacity-30;
+  }
+
+  .chip-warn {
+    @apply chip bg-dark-warning bg-opacity-15 text-dark-warning border border-dark-warning border-opacity-40;
+  }
+
+  .chip-alarm {
+    @apply chip bg-dark-error bg-opacity-15 text-dark-error border border-dark-error border-opacity-40;
+  }
+
+  .alert-error {
+    @apply bg-dark-error bg-opacity-10 border border-dark-error text-dark-error px-4 py-3 rounded-lg;
+  }
+
+  .alert-info {
+    @apply bg-dark-elevated border border-dark-border text-dark-text px-4 py-3 rounded-lg;
+  }
+
+  th.sortable {
+    @apply cursor-pointer select-none hover:text-dark-text;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1f26;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3c4043;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5f6368;
+}
+
+/* Loading spinner */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* Rendered markdown (project readmes) */
+.markdown-body {
+  @apply text-dark-text leading-relaxed;
+}
+.markdown-body h1 { @apply text-2xl mt-6 mb-3 pb-2 border-b border-dark-border; }
+.markdown-body h2 { @apply text-xl mt-6 mb-3 pb-1 border-b border-dark-border; }
+.markdown-body h3 { @apply text-lg mt-4 mb-2; }
+.markdown-body h4 { @apply text-base mt-4 mb-2; }
+.markdown-body p { @apply my-3; }
+.markdown-body ul { @apply list-disc pl-6 my-3 space-y-1; }
+.markdown-body ol { @apply list-decimal pl-6 my-3 space-y-1; }
+.markdown-body a { @apply text-dark-accent hover:text-dark-accentHover underline; }
+.markdown-body code { @apply bg-dark-elevated px-1.5 py-0.5 rounded text-sm font-mono; }
+.markdown-body pre { @apply bg-dark-bg border border-dark-border rounded-lg p-4 my-3 overflow-x-auto; }
+.markdown-body pre code { @apply bg-transparent p-0; }
+.markdown-body blockquote { @apply border-l-4 border-dark-border pl-4 my-3 text-dark-textMuted; }
+.markdown-body table { @apply w-full my-3 text-sm; }
+.markdown-body th { @apply text-left border border-dark-border px-3 py-1.5 bg-dark-elevated; }
+.markdown-body td { @apply border border-dark-border px-3 py-1.5; }
+.markdown-body img { @apply max-w-full rounded-lg my-3; }
+.markdown-body hr { @apply border-dark-border my-6; }

@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node / frontend build
+node_modules/
+dist/
+
+# Secrets & local config
+.env
+*.env.local
+
+# Uploaded files
+uploads/
+
+# Misc
+*.log
+.DS_Store

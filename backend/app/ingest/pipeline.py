@@ -1,0 +1,181 @@
+"""Ingestion pipeline: poll Gmail, parse with Claude, upsert orders.
+
+Orders are upserted by (vendor, order_no, gmail_account):
+  - "ordered" events create the order + items (with fuzzy match suggestions)
+  - "shipped"/"delivered" events only upgrade status / tracking
+Nothing here ever touches component stock - receipt is a human action in the
+review queue (POST /api/orders/<id>/receive).
+"""
+from datetime import datetime, date
+from flask import current_app
+
+from app import db
+from app.models.order import Order, OrderItem, STATUS_RANK
+from app.models.processed_message import ProcessedMessage
+from app.models.component import Component
+from app.ingest import gmail_client
+from app.ingest.matcher import suggest_component
+
+
+def _upsert_order(account, message, parsed):
+    """Create or update an Order from a parsed order email. Returns the Order."""
+    vendor = parsed['vendor']
+    order_no = parsed['order_no']
+    event = parsed['event'] or 'ordered'
+
+    order = None
+    if order_no:
+        order = Order.query.filter_by(
+            vendor=vendor, vendor_order_no=order_no, gmail_account=account,
+        ).first()
+
+    if order is None:
+        order = Order(
+            vendor=vendor,
+            vendor_order_no=order_no,
+            status=event,
+            order_date=date.today(),
+            gmail_account=account,
+            gmail_message_ids=[message['id']],
+            raw_subject=(message.get('subject') or '')[:300],
+            tracking_no=parsed.get('tracking'),
+            carrier=parsed.get('carrier'),
+        )
+        db.session.add(order)
+        db.session.flush()
+
+        components = Component.query.all()
+        for item_data in parsed['items']:
+            item = OrderItem(
+                order_id=order.id,
+                raw_title=item_data['title'],
+                qty=item_data['qty'],
+                unit_price=item_data.get('unit_price'),
+            )
+            suggestion = suggest_component(item_data['title'], components=components)
+            if suggestion:
+                item.suggested_component_id = suggestion
+                item.match_status = 'suggested'
+            db.session.add(item)
+    else:
+        # Status only ever moves forward, and receipt stays a human action
+        if (order.status != 'received'
+                and STATUS_RANK.get(event, 0) > STATUS_RANK.get(order.status, 0)):
+            order.status = event
+        if parsed.get('tracking'):
+            order.tracking_no = parsed['tracking']
+        if parsed.get('carrier'):
+            order.carrier = parsed['carrier']
+        message_ids = list(order.gmail_message_ids or [])
+        if message['id'] not in message_ids:
+            message_ids.append(message['id'])
+            order.gmail_message_ids = message_ids
+
+    return order
+
+
+def run_ingest(accounts=None):
+    """Run one ingestion pass across all authorized Gmail accounts.
+
+    Returns a per-account summary list.
+    """
+    from app.ingest.claude_parser import parse_order_email
+
+    summary = []
+    for account in accounts or gmail_client.get_accounts():
+        result = {
+            'account': account,
+            'fetched': 0,
+            'orders': 0,
+            'non_order': 0,
+            'errors': 0,
+        }
+
+        if account not in gmail_client.load_tokens():
+            result['error'] = 'no token stored'
+            summary.append(result)
+            continue
+
+        known_ids = {
+            row.message_id
+            for row in ProcessedMessage.query.filter_by(gmail_account=account)
+            .with_entities(ProcessedMessage.message_id)
+        }
+
+        try:
+            for message in gmail_client.poll_account(account, known_ids):
+                result['fetched'] += 1
+                try:
+                    parsed = parse_order_email(
+                        message['subject'], message['sender'],
+                        message['body_text'] or message['body_html'],
+                    )
+
+                    processed = ProcessedMessage(
+                        gmail_account=account,
+                        message_id=message['id'],
+                        is_order=bool(parsed and parsed['is_order']),
+                    )
+
+                    if parsed and parsed['is_order']:
+                        order = _upsert_order(account, message, parsed)
+                        processed.order_id = order.id
+                        result['orders'] += 1
+                    else:
+                        result['non_order'] += 1
+
+                    db.session.add(processed)
+                    db.session.commit()  # per-message commit keeps the run idempotent
+                except Exception as e:
+                    db.session.rollback()
+                    result['errors'] += 1
+                    current_app.logger.error(
+                        f'Failed to process message {message["id"]} ({account}): {e}'
+                    )
+
+            gmail_client.update_state(
+                account,
+                last_poll=datetime.utcnow().isoformat(),
+                last_error=None,
+            )
+        except Exception as e:
+            current_app.logger.error(f'Ingest poll failed for {account}: {e}')
+            gmail_client.update_state(account, last_error=str(e))
+            result['error'] = str(e)
+
+        summary.append(result)
+
+    return summary
+
+
+def ingest_status():
+    """Per-account status for /api/ingest/status and the dashboard"""
+    tokens = gmail_client.load_tokens()
+    state = gmail_client.load_state()
+
+    statuses = []
+    for account in gmail_client.get_accounts():
+        token = tokens.get(account)
+        account_state = state.get(account, {})
+
+        if token is None:
+            token_state = 'missing'
+        elif account_state.get('last_error') and 'invalid_grant' in str(account_state['last_error']):
+            token_state = 'dead'
+        elif not token.get('refresh_token'):
+            token_state = 'dead'
+        else:
+            token_state = 'ok'
+
+        processed_query = ProcessedMessage.query.filter_by(gmail_account=account)
+        statuses.append({
+            'account': account,
+            'email': token.get('email') if token else None,
+            'token': token_state,
+            'authorized_at': token.get('authorized_at') if token else None,
+            'last_poll': account_state.get('last_poll'),
+            'last_error': account_state.get('last_error'),
+            'processed_count': processed_query.count(),
+            'order_count': processed_query.filter_by(is_order=True).count(),
+        })
+    return statuses

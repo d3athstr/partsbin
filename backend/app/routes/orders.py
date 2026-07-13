@@ -1,0 +1,319 @@
+from datetime import datetime, date
+from flask import Blueprint, request, current_app
+from flask_login import login_required, current_user
+from app import db
+from app.models.order import Order, OrderItem, ORDER_VENDORS, ORDER_STATUSES
+from app.models.component import Component
+from app.services.stock_service import adjust_stock
+from app.routes import paginate_query
+
+orders_bp = Blueprint('orders', __name__)
+review_bp = Blueprint('review', __name__)
+
+
+ORDER_SORTS = {
+    'order_date': Order.order_date,
+    'vendor': Order.vendor,
+    'status': Order.status,
+    'created_at': Order.created_at,
+    'updated_at': Order.updated_at,
+}
+
+
+def _parse_order_date(value):
+    """Parse an ISO date string into a date, or None"""
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _suggest_for_item(item):
+    """Attach a fuzzy-match suggestion to an order item if one is found"""
+    try:
+        from app.ingest.matcher import suggest_component
+        suggestion = suggest_component(item.raw_title)
+    except Exception as e:
+        current_app.logger.warning(f'Matcher unavailable: {e}')
+        suggestion = None
+    if suggestion:
+        item.suggested_component_id = suggestion
+        item.match_status = 'suggested'
+
+
+@orders_bp.route('', methods=['GET'])
+@orders_bp.route('/', methods=['GET'])
+@login_required
+def list_orders():
+    """List orders with status / vendor filters"""
+    query = Order.query
+
+    status = request.args.get('status')
+    if status:
+        query = query.filter(Order.status == status)
+
+    vendor = request.args.get('vendor')
+    if vendor:
+        query = query.filter(Order.vendor == vendor)
+
+    return paginate_query(
+        query, lambda o: o.to_dict(),
+        sort_map=ORDER_SORTS, default_sort='created_at',
+    ), 200
+
+
+@orders_bp.route('/<int:id>', methods=['GET'])
+@login_required
+def get_order(id):
+    """Get an order with its items and matched component summaries"""
+    order = Order.query.get_or_404(id)
+    return order.to_dict(include_items=True), 200
+
+
+@orders_bp.route('', methods=['POST'])
+@orders_bp.route('/', methods=['POST'])
+@login_required
+def create_order():
+    """Manually create an order (same shape as parsed orders)"""
+    data = request.get_json()
+
+    if not data:
+        return {'error': 'No data provided'}, 400
+
+    vendor = (data.get('vendor') or '').strip().lower()
+    if vendor not in ORDER_VENDORS:
+        return {'error': f'vendor must be one of {", ".join(ORDER_VENDORS)}'}, 400
+
+    status = data.get('status', 'ordered')
+    if status not in ORDER_STATUSES or status == 'received':
+        return {'error': 'status must be ordered, shipped or delivered'}, 400
+
+    order = Order(
+        vendor=vendor,
+        vendor_order_no=(data.get('vendor_order_no') or '').strip() or None,
+        status=status,
+        order_date=_parse_order_date(data.get('order_date')) or date.today(),
+        tracking_no=(data.get('tracking_no') or '').strip() or None,
+        carrier=(data.get('carrier') or '').strip() or None,
+        tracking_url=(data.get('tracking_url') or '').strip() or None,
+        raw_subject=(data.get('raw_subject') or '').strip() or None,
+        total=data.get('total'),
+        notes=data.get('notes'),
+    )
+
+    try:
+        db.session.add(order)
+        db.session.flush()
+
+        for item_data in data.get('items') or []:
+            raw_title = (item_data.get('raw_title') or item_data.get('title') or '').strip()
+            if not raw_title:
+                continue
+            qty = item_data.get('qty', 1)
+            if not isinstance(qty, int) or qty < 1:
+                qty = 1
+            item = OrderItem(
+                order_id=order.id,
+                raw_title=raw_title,
+                qty=qty,
+                unit_price=item_data.get('unit_price'),
+            )
+            component_id = item_data.get('component_id')
+            if component_id and Component.query.get(component_id):
+                item.component_id = component_id
+                item.match_status = 'confirmed'
+            else:
+                _suggest_for_item(item)
+            db.session.add(item)
+
+        db.session.commit()
+        return order.to_dict(include_items=True), 201
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to create order: {e}')
+        return {'error': 'Failed to create order'}, 500
+
+
+@orders_bp.route('/<int:id>', methods=['PUT'])
+@login_required
+def update_order(id):
+    """Manual edits to an order (status / tracking / notes)"""
+    order = Order.query.get_or_404(id)
+    data = request.get_json()
+
+    if not data:
+        return {'error': 'No data provided'}, 400
+
+    if 'status' in data:
+        status = data['status']
+        if status not in ORDER_STATUSES:
+            return {'error': f'status must be one of {", ".join(ORDER_STATUSES)}'}, 400
+        if status == 'received' and order.status != 'received':
+            return {'error': 'Use POST /receive to receive an order (it updates stock)'}, 400
+        order.status = status
+
+    for field in ('tracking_no', 'carrier', 'tracking_url', 'vendor_order_no'):
+        if field in data:
+            setattr(order, field, (data.get(field) or '').strip() or None)
+
+    if 'notes' in data:
+        order.notes = data['notes']
+
+    if 'total' in data:
+        order.total = data['total']
+
+    if 'order_date' in data:
+        order.order_date = _parse_order_date(data['order_date'])
+
+    try:
+        db.session.commit()
+        return order.to_dict(include_items=True), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to update order: {e}')
+        return {'error': 'Failed to update order'}, 500
+
+
+@orders_bp.route('/<int:id>/items/<int:item_id>', methods=['PUT'])
+@login_required
+def update_order_item(id, item_id):
+    """Match-queue decisions for an item: set component or match_status"""
+    item = OrderItem.query.filter_by(id=item_id, order_id=id).first_or_404()
+    data = request.get_json()
+
+    if not data:
+        return {'error': 'No data provided'}, 400
+
+    if 'component_id' in data:
+        component = Component.query.get(data.get('component_id') or 0)
+        if not component:
+            return {'error': 'component_id must reference an existing component'}, 400
+        item.component_id = component.id
+        item.match_status = 'confirmed'
+    elif 'match_status' in data:
+        match_status = data['match_status']
+        if match_status == 'confirmed':
+            component_id = item.component_id or item.suggested_component_id
+            if not component_id:
+                return {'error': 'Cannot confirm an item with no matched component'}, 400
+            item.component_id = component_id
+            item.match_status = 'confirmed'
+        elif match_status in ('ignored', 'unmatched'):
+            item.match_status = match_status
+            if match_status == 'unmatched':
+                item.component_id = None
+        else:
+            return {'error': 'match_status must be confirmed, ignored or unmatched'}, 400
+    else:
+        return {'error': 'Provide component_id or match_status'}, 400
+
+    try:
+        db.session.commit()
+        return item.to_dict(), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to update order item: {e}')
+        return {'error': 'Failed to update order item'}, 500
+
+
+@orders_bp.route('/<int:id>/items/<int:item_id>/create-component', methods=['POST'])
+@login_required
+def create_component_from_item(id, item_id):
+    """Create a new component pre-filled from an order item, auto-confirms"""
+    item = OrderItem.query.filter_by(id=item_id, order_id=id).first_or_404()
+    data = request.get_json() or {}
+
+    from app.routes.components import _validate_category, _set_fields
+
+    name = (data.get('name') or item.raw_title or '').strip()[:200]
+    category = (data.get('category') or 'Other').strip()
+
+    if not name:
+        return {'error': 'name is required'}, 400
+    if not _validate_category(category):
+        return {'error': 'category must be one of the seeded categories'}, 400
+
+    component = Component(name=name, category=category, user_id=current_user.id)
+
+    try:
+        _set_fields(component, data)
+    except ValueError as e:
+        return {'error': str(e)}, 400
+
+    try:
+        db.session.add(component)
+        db.session.flush()
+
+        item.component_id = component.id
+        item.match_status = 'confirmed'
+
+        db.session.commit()
+        return {'component': component.to_dict(), 'item': item.to_dict()}, 201
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to create component from item: {e}')
+        return {'error': 'Failed to create component'}, 500
+
+
+@orders_bp.route('/<int:id>/receive', methods=['POST'])
+@login_required
+def receive_order(id):
+    """Mark an order received; confirmed items increment stock"""
+    order = Order.query.get_or_404(id)
+
+    if order.status == 'received':
+        return {'error': 'Order has already been received'}, 400
+
+    try:
+        received_items = 0
+        for item in order.items:
+            if item.match_status == 'confirmed' and item.component_id:
+                adjust_stock(
+                    item.component, item.qty, 'order_received',
+                    user_id=current_user.id,
+                    order_item_id=item.id,
+                    note=f'{order.vendor} order {order.vendor_order_no or order.id}',
+                )
+                received_items += 1
+
+        order.status = 'received'
+        order.received_at = datetime.utcnow()
+        db.session.commit()
+
+        data = order.to_dict(include_items=True)
+        data['received_items'] = received_items
+        return data, 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to receive order: {e}')
+        return {'error': 'Failed to receive order'}, 500
+
+
+# ==================== Review queue ====================
+
+def pending_review_orders():
+    """Orders needing attention: unmatched/suggested items, or delivered but not received"""
+    orders = (Order.query.filter(Order.status != 'received')
+              .order_by(Order.created_at.desc()).all())
+    pending = []
+    for order in orders:
+        needs_match = order.pending_item_count > 0
+        needs_receive = order.status == 'delivered'
+        if needs_match or needs_receive:
+            data = order.to_dict(include_items=True)
+            data['needs_match'] = needs_match
+            data['needs_receive'] = needs_receive
+            pending.append(data)
+    return pending
+
+
+@review_bp.route('/pending', methods=['GET'])
+@login_required
+def review_pending():
+    """Count + orders (with items) needing a match decision or receipt"""
+    orders = pending_review_orders()
+    return {'count': len(orders), 'orders': orders}, 200

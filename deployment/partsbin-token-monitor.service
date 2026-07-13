@@ -1,0 +1,29 @@
+[Unit]
+Description=PartsBin Google token keep-alive monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/partsbin/backend
+EnvironmentFile=-/opt/partsbin/backend/.env
+Environment=FLASK_APP=run.py
+ExecStart=/opt/partsbin/backend/venv/bin/flask ingest token-monitor
+TimeoutStartSec=300
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/partsbin
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
