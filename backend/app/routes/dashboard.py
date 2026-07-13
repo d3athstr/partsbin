@@ -3,7 +3,7 @@ from flask_login import login_required
 from app.models.component import Component
 from app.models.project import Project
 from app.models.order import Order
-from app.routes.orders import pending_review_orders
+from app.routes.orders import pending_review_orders, _visible_orders
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -21,7 +21,7 @@ def dashboard():
                     .filter(Component.qty_on_hand <= 0)
                     .order_by(Component.name)
                     .limit(50).all())
-    recent_orders = (Order.query
+    recent_orders = (_visible_orders()
                      .order_by(Order.created_at.desc())
                      .limit(5).all())
 
@@ -41,6 +41,6 @@ def dashboard():
         'totals': {
             'components': Component.query.count(),
             'projects': Project.query.count(),
-            'orders': Order.query.count(),
+            'orders': _visible_orders().count(),
         },
     }, 200

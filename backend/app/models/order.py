@@ -27,6 +27,9 @@ class Order(db.Model):
 
     # Ingestion provenance
     gmail_account = db.Column(db.String(100), nullable=True, index=True)
+    # Set on manual order entry; scopes the order to its creator when there is
+    # no gmail_account (visibility follows gmail_account first, then creator).
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     gmail_message_ids = db.Column(JSONType, nullable=True)  # list of gmail message ids
     raw_subject = db.Column(db.String(300), nullable=True)
 

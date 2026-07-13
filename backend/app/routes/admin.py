@@ -53,6 +53,36 @@ def approve_user(user_id):
         return {'error': 'Failed to approve user'}, 500
 
 
+@admin_bp.route('/users/<int:user_id>/gmail-account', methods=['PUT'])
+@admin_required
+def set_user_gmail_account(user_id):
+    """Map a user to an ingest Gmail account ('don'/'deanna'; null to clear).
+
+    Orders are only visible to the user owning their gmail_account, so this is
+    the fallback when a username doesn't match an INGEST_ACCOUNTS entry."""
+    user = User.query.get_or_404(user_id)
+    data = request.get_json() or {}
+    account = data.get('account')
+
+    if account is not None:
+        account = str(account).strip().lower() or None
+    if account is not None:
+        from app.ingest.gmail_client import get_accounts
+        if account not in get_accounts():
+            return {'error': f'account must be one of {", ".join(get_accounts())} or null'}, 400
+
+    user.gmail_account = account
+
+    try:
+        db.session.commit()
+        return {'message': f'User {user.username} mapped to {account or "no account"}',
+                'user': user.to_dict()}, 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to set gmail account: {e}')
+        return {'error': 'Failed to set gmail account'}, 500
+
+
 @admin_bp.route('/users/<int:user_id>/revoke', methods=['PUT'])
 @admin_required
 def revoke_user(user_id):

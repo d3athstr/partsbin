@@ -19,6 +19,10 @@ class User(db.Model, UserMixin):
     # TOTP 2FA fields
     totp_secret_encrypted = db.Column(db.String(200), nullable=True)
     totp_enabled = db.Column(db.Boolean, default=False)
+    # Which ingest Gmail account this user owns (e.g. 'don'/'deanna').
+    # Orders are only visible to their owning user; auto-assigned on login
+    # when the username matches an INGEST_ACCOUNTS entry.
+    gmail_account = db.Column(db.String(100), nullable=True, index=True)
 
     # Relationships
     passkeys = db.relationship('PasskeyCredential', back_populates='user', lazy='dynamic', cascade='all, delete-orphan')
@@ -67,6 +71,7 @@ class User(db.Model, UserMixin):
             'passkey_count': self.passkeys.count(),
             'is_admin': self.is_admin or False,
             'is_approved': self.is_approved or False,
+            'gmail_account': self.gmail_account,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
         return data

@@ -11,6 +11,47 @@ orders_bp = Blueprint('orders', __name__)
 review_bp = Blueprint('review', __name__)
 
 
+def _user_account():
+    """The ingest Gmail account the current user owns ('don'/'deanna'), if any.
+
+    Auto-assigns on first use when the username matches an INGEST_ACCOUNTS
+    entry (case-insensitive); admins can override via the admin users API.
+    """
+    if current_user.gmail_account:
+        return current_user.gmail_account
+    from app.ingest.gmail_client import get_accounts
+    uname = (current_user.username or '').strip().lower()
+    if uname in get_accounts():
+        current_user.gmail_account = uname
+        db.session.commit()
+        return uname
+    return None
+
+
+def _visible_orders():
+    """Orders scoped to the current user: their Gmail account's orders plus
+    orders they created manually. Users with no account mapping see only
+    their own manual orders and legacy unowned ones."""
+    acct = _user_account()
+    if acct:
+        return Order.query.filter(db.or_(
+            Order.gmail_account == acct,
+            Order.created_by_id == current_user.id,
+        ))
+    return Order.query.filter(db.or_(
+        Order.created_by_id == current_user.id,
+        db.and_(Order.gmail_account.is_(None), Order.created_by_id.is_(None)),
+    ))
+
+
+def _visible_order_or_404(id):
+    order = _visible_orders().filter(Order.id == id).first()
+    if order is None:
+        from flask import abort
+        abort(404)
+    return order
+
+
 ORDER_SORTS = {
     'order_date': Order.order_date,
     'vendor': Order.vendor,
@@ -51,8 +92,8 @@ def _suggest_for_item(item):
 @orders_bp.route('/', methods=['GET'])
 @login_required
 def list_orders():
-    """List orders with status / vendor filters"""
-    query = Order.query
+    """List orders with status / vendor filters (scoped to the current user)"""
+    query = _visible_orders()
 
     status = request.args.get('status')
     if status == 'all':
@@ -87,7 +128,7 @@ def list_orders():
 @login_required
 def get_order(id):
     """Get an order with its items and matched component summaries"""
-    order = Order.query.get_or_404(id)
+    order = _visible_order_or_404(id)
     return order.to_dict(include_items=True), 200
 
 
@@ -118,6 +159,8 @@ def create_order():
         carrier=(data.get('carrier') or '').strip() or None,
         tracking_url=(data.get('tracking_url') or '').strip() or None,
         raw_subject=(data.get('raw_subject') or '').strip() or None,
+        gmail_account=_user_account(),
+        created_by_id=current_user.id,
         total=data.get('total'),
         notes=data.get('notes'),
     )
@@ -159,7 +202,7 @@ def create_order():
 @login_required
 def update_order(id):
     """Manual edits to an order (status / tracking / notes)"""
-    order = Order.query.get_or_404(id)
+    order = _visible_order_or_404(id)
     data = request.get_json()
 
     if not data:
@@ -316,7 +359,7 @@ def auto_create_components(id):
     is one; otherwise ask Claude for a component definition, create it with
     qty 0 and link it. Stock still only moves on /receive.
     """
-    order = Order.query.get_or_404(id)
+    order = _visible_order_or_404(id)
     pending = [it for it in order.items
                if it.match_status in ('unmatched', 'suggested')]
     if not pending:
@@ -437,7 +480,7 @@ def auto_create_components(id):
 @login_required
 def receive_order(id):
     """Mark an order received; confirmed items increment stock"""
-    order = Order.query.get_or_404(id)
+    order = _visible_order_or_404(id)
 
     if order.status == 'received':
         return {'error': 'Order has already been received'}, 400
@@ -465,7 +508,7 @@ def receive_order(id):
 
 def pending_review_orders():
     """Orders needing attention: unmatched/suggested items, or delivered but not received"""
-    orders = (Order.query.filter(Order.status.notin_(('received', 'ignored')))
+    orders = (_visible_orders().filter(Order.status.notin_(('received', 'ignored')))
               .order_by(Order.created_at.desc()).all())
     pending = []
     for order in orders:
