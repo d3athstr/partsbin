@@ -7,6 +7,8 @@ Nothing here ever touches component stock - receipt is a human action in the
 review queue (POST /api/orders/<id>/receive).
 """
 from datetime import datetime, date
+from email.utils import parsedate_to_datetime
+
 from flask import current_app
 
 from app import db
@@ -15,6 +17,14 @@ from app.models.processed_message import ProcessedMessage
 from app.models.component import Component
 from app.ingest import gmail_client
 from app.ingest.matcher import suggest_component
+
+
+def _message_date(message):
+    """The email's own Date header as a date (None if unparseable)"""
+    try:
+        return parsedate_to_datetime(message.get('date')).date()
+    except Exception:
+        return None
 
 
 def _upsert_order(account, message, parsed):
@@ -34,7 +44,7 @@ def _upsert_order(account, message, parsed):
             vendor=vendor,
             vendor_order_no=order_no,
             status=event,
-            order_date=date.today(),
+            order_date=_message_date(message) or date.today(),
             gmail_account=account,
             gmail_message_ids=[message['id']],
             raw_subject=(message.get('subject') or '')[:300],
@@ -70,6 +80,11 @@ def _upsert_order(account, message, parsed):
         if message['id'] not in message_ids:
             message_ids.append(message['id'])
             order.gmail_message_ids = message_ids
+        # If this email predates the recorded date (e.g. the "ordered" email
+        # arrived after a "shipped" one created the order), keep the earliest
+        md = _message_date(message)
+        if md and (order.order_date is None or md < order.order_date):
+            order.order_date = md
 
     return order
 
@@ -106,6 +121,19 @@ def run_ingest(accounts=None):
             for message in gmail_client.poll_account(account, known_ids):
                 result['fetched'] += 1
                 try:
+                    # Pharmacy mail is excluded from the Gmail query too; this
+                    # guard keeps it out of Claude even if the query misses one.
+                    sender_l = (message.get('sender') or '').lower()
+                    subject_l = (message.get('subject') or '').lower()
+                    if 'pharmacy' in sender_l or 'amazon pharmacy' in subject_l:
+                        db.session.add(ProcessedMessage(
+                            gmail_account=account,
+                            message_id=message['id'],
+                            is_order=False,
+                        ))
+                        db.session.commit()
+                        continue
+
                     parsed = parse_order_email(
                         message['subject'], message['sender'],
                         message['body_text'] or message['body_html'],

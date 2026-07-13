@@ -7,6 +7,7 @@ import StatusChip from '../components/common/StatusChip';
 import ComponentPicker from '../components/common/ComponentPicker';
 import CreateComponentModal from '../components/orders/CreateComponentModal';
 import { fmtDate, fmtMoney } from '../utils/format';
+import { vendorOrderUrl } from '../utils/vendors';
 
 const MatchStatusText = ({ status }) => {
   if (status === 'confirmed') return <span className="chip-neutral">confirmed</span>;
@@ -58,6 +59,28 @@ const OrderDetailPage = () => {
     onError: (err) => setActionError(errMsg(err, 'Failed to create component')),
   });
 
+  const autoCreateMutation = useMutation({
+    mutationFn: () => orderService.autoCreateComponents(id),
+    onSuccess: (res) => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['components'] });
+      const failed = res?.failed?.length || 0;
+      setActionError(
+        failed ? `${failed} item${failed === 1 ? '' : 's'} could not be auto-created - match manually.` : ''
+      );
+    },
+    onError: (err) => setActionError(errMsg(err, 'Auto-create failed')),
+  });
+
+  const ignoreMutation = useMutation({
+    mutationFn: () => orderService.update(id, { status: 'ignored' }),
+    onSuccess: () => {
+      invalidate();
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Failed to ignore order')),
+  });
+
   const receiveMutation = useMutation({
     mutationFn: () => orderService.receive(id),
     onSuccess: () => {
@@ -95,7 +118,21 @@ const OrderDetailPage = () => {
           </Link>
           <div className="flex items-center gap-3 mt-1">
             <h1 className="capitalize">
-              {order.vendor} {order.vendor_order_no && <span className="font-mono text-xl">#{order.vendor_order_no}</span>}
+              {order.vendor}{' '}
+              {order.vendor_order_no &&
+                (vendorOrderUrl(order.vendor, order.vendor_order_no) ? (
+                  <a
+                    href={vendorOrderUrl(order.vendor, order.vendor_order_no)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="link font-mono text-xl"
+                    title="Open the order on the vendor's site"
+                  >
+                    #{order.vendor_order_no}
+                  </a>
+                ) : (
+                  <span className="font-mono text-xl">#{order.vendor_order_no}</span>
+                ))}
             </h1>
             <StatusChip status={order.status} needsReview={!isReceived && unresolved.length > 0} />
           </div>
@@ -106,13 +143,35 @@ const OrderDetailPage = () => {
 
         {!isReceived && (
           <div className="text-right">
-            <button
-              onClick={() => receiveMutation.mutate()}
-              disabled={!allResolved || receiveMutation.isPending}
-              className="btn-primary"
-            >
-              {receiveMutation.isPending ? 'Receiving...' : 'Mark Received'}
-            </button>
+            <div className="flex flex-wrap gap-2 justify-end">
+              {order.status !== 'ignored' && (
+                <button
+                  onClick={() => ignoreMutation.mutate()}
+                  disabled={ignoreMutation.isPending}
+                  className="btn-secondary"
+                  title="Hide this order - it will not affect stock"
+                >
+                  {ignoreMutation.isPending ? 'Ignoring...' : 'Ignore Order'}
+                </button>
+              )}
+              {unresolved.length > 0 && (
+                <button
+                  onClick={() => autoCreateMutation.mutate()}
+                  disabled={autoCreateMutation.isPending}
+                  className="btn-secondary"
+                  title="Claude infers a component (name, category, specs) for each pending item"
+                >
+                  {autoCreateMutation.isPending ? 'Asking Claude...' : 'Auto-create Components'}
+                </button>
+              )}
+              <button
+                onClick={() => receiveMutation.mutate()}
+                disabled={!allResolved || receiveMutation.isPending}
+                className="btn-primary"
+              >
+                {receiveMutation.isPending ? 'Receiving...' : 'Mark Received'}
+              </button>
+            </div>
             {!allResolved && (
               <p className="text-xs text-dark-warning mt-2 max-w-xs">
                 {items.length === 0

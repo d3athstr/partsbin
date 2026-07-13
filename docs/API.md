@@ -39,14 +39,17 @@ POST /api/projects/<id>/files (multipart, kind=image|pdf|schematic|firmware|othe
 DELETE /api/projects/<id>/files/<file_id> ; GET /uploads/projects/<file>
 
 ## Orders / review queue
-GET /api/orders?status=&vendor=
+GET /api/orders?status=&vendor=  # no status → active only (excludes received+ignored); status=all → everything
 GET /api/orders/<id>  → order + items (+ suggested/confirmed component summaries)
-PUT /api/orders/<id> {status, tracking_no, carrier, notes}   # manual edits allowed
+PUT /api/orders/<id> {status, tracking_no, carrier, notes}   # manual edits; status=ignored hides the order (sticky vs later emails)
 POST /api/orders  (manual order entry, same shape as parsed)
 PUT /api/orders/<id>/items/<item_id> {component_id | match_status: confirmed|ignored}
 POST /api/orders/<id>/items/<item_id>/create-component {overrides...}  # new component from item, auto-confirms
+POST /api/orders/<id>/auto-create-components  # Claude infers a component per pending item (name/category/specs),
+                                              # links suggestions/fuzzy matches instead of duplicating, multiplies
+                                              # item qty by detected pack size ("100pcs" → qty×100). No stock moves.
 POST /api/orders/<id>/receive    # order → received; each confirmed item: +qty transaction
-GET /api/review/pending          # count + items across orders needing match/receive
+GET /api/review/pending          # count + orders (with items) needing match/receive; excludes ignored
 
 ## Ingest / OAuth
 GET /api/ingest/status           # per gmail account: email, token ok/dead/missing, last poll, last error, counts

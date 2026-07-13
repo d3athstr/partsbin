@@ -53,8 +53,14 @@ def list_orders():
     query = Order.query
 
     status = request.args.get('status')
-    if status:
+    if status == 'all':
+        pass
+    elif status:
         query = query.filter(Order.status == status)
+    else:
+        # Default view is the active pipeline: received and ignored orders are
+        # done - they only show when asked for explicitly (or with status=all).
+        query = query.filter(Order.status.notin_(('received', 'ignored')))
 
     vendor = request.args.get('vendor')
     if vendor:
@@ -259,6 +265,96 @@ def create_component_from_item(id, item_id):
         return {'error': 'Failed to create component'}, 500
 
 
+@orders_bp.route('/<int:id>/auto-create-components', methods=['POST'])
+@login_required
+def auto_create_components(id):
+    """Claude-infer and create components for all pending items on an order.
+
+    For each unmatched/suggested item: link the existing suggestion when there
+    is one; otherwise ask Claude for a component definition, create it with
+    qty 0 and link it. Stock still only moves on /receive.
+    """
+    order = Order.query.get_or_404(id)
+    pending = [it for it in order.items
+               if it.match_status in ('unmatched', 'suggested')]
+    if not pending:
+        return {'message': 'No pending items on this order',
+                'created': [], 'linked': [], 'failed': []}, 200
+
+    from app.ingest.claude_parser import infer_components
+    from app.ingest.matcher import suggest_component
+    from app.models.category import Category
+
+    categories = [c.name for c in Category.query.order_by(Category.id).all()]
+    valid_categories = set(categories)
+
+    try:
+        inferred = infer_components([it.raw_title or '' for it in pending], categories)
+    except Exception as e:
+        current_app.logger.error(f'Component inference failed: {e}')
+        return {'error': f'Claude inference failed: {e}'}, 502
+
+    created, linked, failed = [], [], []
+    known_components = Component.query.all()
+
+    try:
+        for item, comp_def in zip(pending, inferred):
+            # An ingest-time fuzzy suggestion wins - link it instead of creating a twin
+            if item.suggested_component_id:
+                item.component_id = item.suggested_component_id
+                item.match_status = 'confirmed'
+                linked.append({'item_id': item.id, 'component_id': item.component_id,
+                               'via': 'suggestion'})
+                continue
+
+            if comp_def is None:
+                failed.append({'item_id': item.id, 'title': item.raw_title})
+                continue
+
+            # Dedupe against inventory + components created earlier in this run
+            match_id = suggest_component(comp_def['name'], components=known_components)
+            if match_id:
+                item.component_id = match_id
+                item.match_status = 'confirmed'
+                linked.append({'item_id': item.id, 'component_id': match_id,
+                               'via': 'fuzzy'})
+            else:
+                category = comp_def.get('category') or 'Other'
+                if category not in valid_categories:
+                    category = 'Other'
+                specs = comp_def.get('specs')
+                component = Component(
+                    name=comp_def['name'].strip()[:200],
+                    category=category,
+                    manufacturer=(comp_def.get('manufacturer') or None),
+                    mpn=(comp_def.get('mpn') or None),
+                    description=(comp_def.get('description') or None),
+                    specs=specs if isinstance(specs, dict) else {},
+                    user_id=current_user.id,
+                )
+                db.session.add(component)
+                db.session.flush()
+                known_components.append(component)
+                item.component_id = component.id
+                item.match_status = 'confirmed'
+                created.append({'item_id': item.id, 'component_id': component.id,
+                                'name': component.name, 'category': component.category})
+
+            # Multi-packs: "100pcs ..." qty 1 should land 100 units at receive
+            units = comp_def.get('units_per_item', 1) if comp_def else 1
+            if units > 1:
+                item.qty = (item.qty or 1) * units
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Auto-create components failed: {e}')
+        return {'error': 'Failed to create components'}, 500
+
+    return {'created': created, 'linked': linked, 'failed': failed,
+            'order': order.to_dict(include_items=True)}, 200
+
+
 @orders_bp.route('/<int:id>/receive', methods=['POST'])
 @login_required
 def receive_order(id):
@@ -297,7 +393,7 @@ def receive_order(id):
 
 def pending_review_orders():
     """Orders needing attention: unmatched/suggested items, or delivered but not received"""
-    orders = (Order.query.filter(Order.status != 'received')
+    orders = (Order.query.filter(Order.status.notin_(('received', 'ignored')))
               .order_by(Order.created_at.desc()).all())
     pending = []
     for order in orders:

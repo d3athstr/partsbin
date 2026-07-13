@@ -44,6 +44,12 @@ const orderService = {
     return response.data;
   },
 
+  /** Claude-infer + create components for all pending items on an order. */
+  autoCreateComponents: async (orderId) => {
+    const response = await api.post(`/orders/${orderId}/auto-create-components`);
+    return response.data;
+  },
+
   /** Mark order received; confirmed items get +qty transactions. */
   receive: async (orderId) => {
     const response = await api.post(`/orders/${orderId}/receive`);

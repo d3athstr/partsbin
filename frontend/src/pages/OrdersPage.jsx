@@ -5,9 +5,10 @@ import orderService from '../services/orderService';
 import Pagination from '../components/common/Pagination';
 import StatusChip from '../components/common/StatusChip';
 import { fmtDate, fmtMoney } from '../utils/format';
+import { vendorOrderUrl } from '../utils/vendors';
 
 const PER_PAGE = 25;
-const STATUSES = ['ordered', 'shipped', 'delivered', 'received'];
+const STATUSES = ['ordered', 'shipped', 'delivered', 'received', 'ignored'];
 const VENDORS = ['amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'other'];
 
 /**
@@ -64,7 +65,8 @@ const OrdersPage = () => {
           }}
           className="input sm:w-48"
         >
-          <option value="">All statuses</option>
+          <option value="">Active (needs action)</option>
+          <option value="all">All statuses</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -127,7 +129,21 @@ const OrdersPage = () => {
                     className="border-b border-dark-border last:border-b-0 hover:bg-dark-elevated cursor-pointer"
                   >
                     <td className="py-2.5 px-3 capitalize">{o.vendor}</td>
-                    <td className="py-2.5 px-3 font-mono text-xs">{o.vendor_order_no || '—'}</td>
+                    <td className="py-2.5 px-3 font-mono text-xs">
+                      {vendorOrderUrl(o.vendor, o.vendor_order_no) ? (
+                        <a
+                          href={vendorOrderUrl(o.vendor, o.vendor_order_no)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="link"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {o.vendor_order_no}
+                        </a>
+                      ) : (
+                        o.vendor_order_no || '—'
+                      )}
+                    </td>
                     <td className="py-2.5 px-3 text-dark-textMuted hidden sm:table-cell">
                       {fmtDate(o.order_date)}
                     </td>

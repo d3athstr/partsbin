@@ -16,7 +16,8 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # duck.com forwarding alias that rewrites the From address to
 # <sender>_at_<domain>_<hash>@duck.com, so from:aliexpress.com never matches.
 GMAIL_QUERY_BASE = (
-    'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com)'
+    'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com) '
+    '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )
 
 

@@ -150,3 +150,87 @@ def parse_order_email(subject, sender, body):
 
     text = next((block.text for block in response.content if block.type == 'text'), '')
     return _normalize(_extract_json(text))
+
+
+# ==================== Component inference (review-queue auto-create) ====================
+
+COMPONENT_SYSTEM_PROMPT = """You turn raw vendor order-item titles into clean \
+component definitions for an electronics inventory. You receive a numbered list \
+of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey orders) and a \
+list of allowed categories.
+
+Respond with ONLY a single JSON object - no prose, no markdown fences:
+
+{
+  "components": [
+    {
+      "index": integer,            // matches the input item number
+      "name": string,              // concise canonical name, e.g. "0.1uF 50V Ceramic Capacitor (0805)"
+      "category": string,          // MUST be one of the allowed categories
+      "manufacturer": string|null, // only if clearly identifiable (e.g. "Espressif", "Adafruit")
+      "mpn": string|null,          // manufacturer part number if present in the title
+      "description": string|null,  // one short sentence, only if it adds information
+      "specs": {  },               // key/value specs pulled from the title, e.g.
+                                   // {"resistance": "10k", "tolerance": "1%", "package": "0603"}
+      "units_per_item": integer    // units in ONE ordered item: "100pcs ..." -> 100, else 1
+    }
+  ]
+}
+
+Rules:
+- Names should be searchable and deduplicatable: value + key spec + package/form
+  factor. Strip marketing fluff ("Hot Sale", "for Arduino DIY Kit", emoji).
+- Multi-packs: "5PCS ESP32-S3 DevKitC" -> name the single unit, units_per_item=5.
+- Assorted kits (e.g. "600pcs resistor kit 10ohm-1M") stay ONE component
+  (category fits the parts, units_per_item=1) - do not explode kits.
+- If a title is not really an electronic component (gift, household item),
+  still return an entry with your best category ("Other") - the human decides.
+- specs values are short strings; omit unknown fields rather than guessing."""
+
+
+def infer_components(titles, categories):
+    """Infer component definitions from raw order-item titles (one Claude call).
+
+    Args:
+        titles: list of raw item title strings
+        categories: allowed category names
+
+    Returns:
+        list aligned with titles; each entry is a dict (name/category/specs/...)
+        or None when inference failed for that title.
+    """
+    if not titles:
+        return []
+
+    numbered = '\n'.join(f'{i + 1}. {t}' for i, t in enumerate(titles))
+    prompt = (
+        f"Allowed categories: {', '.join(categories)}\n\n"
+        f"Items:\n{numbered}"
+    )
+
+    response = _client().messages.create(
+        model=MODEL,
+        max_tokens=4096,
+        system=COMPONENT_SYSTEM_PROMPT,
+        messages=[{'role': 'user', 'content': prompt}],
+    )
+    text = next((block.text for block in response.content if block.type == 'text'), '')
+    data = _extract_json(text)
+    if not data or not isinstance(data.get('components'), list):
+        return [None] * len(titles)
+
+    by_index = {}
+    for comp in data['components']:
+        if isinstance(comp, dict) and isinstance(comp.get('index'), int):
+            by_index[comp['index'] - 1] = comp
+
+    results = []
+    for i in range(len(titles)):
+        comp = by_index.get(i)
+        if not comp or not (comp.get('name') or '').strip():
+            results.append(None)
+            continue
+        units = comp.get('units_per_item')
+        comp['units_per_item'] = units if isinstance(units, int) and units > 0 else 1
+        results.append(comp)
+    return results
