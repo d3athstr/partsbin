@@ -38,6 +38,18 @@ def _upsert_order(account, message, parsed):
         order = Order.query.filter_by(
             vendor=vendor, vendor_order_no=order_no, gmail_account=account,
         ).first()
+    elif parsed.get('tracking'):
+        # Number-less carrier-status emails can still join their order by
+        # tracking number
+        order = Order.query.filter_by(
+            vendor=vendor, tracking_no=parsed['tracking'], gmail_account=account,
+        ).first()
+
+    if order is None and not order_no and event in ('shipped', 'delivered'):
+        # Tracking-status noise: the real order always arrives with a number
+        # in its confirmation email. Creating a numberless twin here is how
+        # stock gets counted twice - drop it.
+        return None
 
     if order is None:
         order = Order(
@@ -196,10 +208,13 @@ def run_ingest(accounts=None):
 
                     if parsed and parsed['is_order']:
                         order = _upsert_order(account, message, parsed)
-                        processed.order_id = order.id
-                        result['orders'] += 1
-                        if _maybe_auto_receive(order):
-                            result['auto_received'] = result.get('auto_received', 0) + 1
+                        if order is not None:
+                            processed.order_id = order.id
+                            result['orders'] += 1
+                            if _maybe_auto_receive(order):
+                                result['auto_received'] = result.get('auto_received', 0) + 1
+                        else:
+                            result['untracked_status'] = result.get('untracked_status', 0) + 1
                     else:
                         result['non_order'] += 1
 
