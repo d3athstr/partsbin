@@ -310,6 +310,10 @@ def poll_account(user, known_ids):
         page_token = resp.get('nextPageToken')
         if not page_token:
             break
+    # Gmail lists newest-first; process oldest-first so an order's "Ordered"
+    # email lands before its "Shipped"/"Delivered" ones (status ranking and
+    # the combined-shipment dup guard both depend on this).
+    message_ids.reverse()
 
     for mid in message_ids:
         if mid in known_ids:
