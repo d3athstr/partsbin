@@ -51,6 +51,18 @@ const componentService = {
     return response.data;
   },
 
+  /** Draft a component from a product-page URL (Amazon/AliExpress/...). */
+  fromUrl: async (url) => {
+    const response = await api.post('/components/from-url', { url });
+    return response.data;
+  },
+
+  /** Download one of the draft's candidate images onto a component. */
+  attachImage: async (id, urls) => {
+    const response = await api.post(`/components/${id}/attach-image`, { urls });
+    return response.data;
+  },
+
   /** Web-search image/datasheet/missing metadata for a component. */
   enrich: async (id) => {
     const response = await api.post(`/components/${id}/enrich`);

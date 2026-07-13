@@ -22,6 +22,26 @@ const SortHeader = ({ label, field, sort, order, onSort, className = '' }) => (
 
 const InventoryPage = () => {
   const navigate = useNavigate();
+  const [showUrlModal, setShowUrlModal] = useState(false);
+  const [productUrl, setProductUrl] = useState('');
+  const [urlBusy, setUrlBusy] = useState(false);
+  const [urlError, setUrlError] = useState('');
+
+  const handleFromUrl = async (e) => {
+    e.preventDefault();
+    setUrlBusy(true);
+    setUrlError('');
+    try {
+      const data = await componentService.fromUrl(productUrl.trim());
+      setShowUrlModal(false);
+      setProductUrl('');
+      navigate('/inventory/new', { state: { draft: data.draft } });
+    } catch (err) {
+      setUrlError(errMsg(err, 'Could not read that product page'));
+    } finally {
+      setUrlBusy(false);
+    }
+  };
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
@@ -114,6 +134,9 @@ const InventoryPage = () => {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>Inventory</h1>
+        <button onClick={() => setShowUrlModal(true)} className="btn-secondary">
+          Add from URL
+        </button>
         <Link to="/inventory/new" className="btn-primary">
           Add Component
         </Link>
@@ -188,6 +211,34 @@ const InventoryPage = () => {
           </span>
         </div>
       </div>
+
+      {showUrlModal && (
+        <div className="card border border-dark-border">
+          <form onSubmit={handleFromUrl} className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="url"
+              required
+              autoFocus
+              value={productUrl}
+              onChange={(e) => setProductUrl(e.target.value)}
+              placeholder="Paste an Amazon / AliExpress / Adafruit / Mouser / DigiKey product URL"
+              className="input flex-1"
+            />
+            <button type="submit" disabled={urlBusy} className="btn-primary">
+              {urlBusy ? 'Reading page...' : 'Fetch'}
+            </button>
+            <button type="button" onClick={() => setShowUrlModal(false)} className="btn-secondary">
+              Cancel
+            </button>
+          </form>
+          {urlError && <div className="alert-error mt-3">{urlError}</div>}
+          {urlBusy && (
+            <p className="text-xs text-dark-textMuted mt-2">
+              Claude is reading the product page - this takes 10-30 seconds.
+            </p>
+          )}
+        </div>
+      )}
 
       {actionError && <div className="alert-error">{actionError}</div>}
       {error && <div className="alert-error">Failed to load components: {error.message}</div>}

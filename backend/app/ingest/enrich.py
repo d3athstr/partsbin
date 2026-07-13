@@ -229,3 +229,80 @@ def enrich_component(component_id, force=False):
     if any(result.values()):
         db.session.commit()
     return result
+
+
+FROM_URL_SYSTEM = """You turn a product-page URL into a component definition \
+for an electronics inventory. Fetch the URL (marketplaces may block fetches - \
+then extract the product name from the URL slug and use web search instead). \
+You are given the allowed category list.
+
+Respond with ONLY one JSON object, no prose, no markdown fences:
+{"name": string,               // concise canonical name, e.g. "0.1uF 50V Ceramic Capacitor (0805)"
+ "category": string,           // MUST be one of the allowed categories
+ "manufacturer": string|null,
+ "mpn": string|null,
+ "description": string|null,   // one short sentence
+ "specs": {},                  // short key/value strings from the page
+ "units_per_pack": integer,    // "100pcs" pack -> 100, else 1
+ "image_urls": [string, ...],  // up to 3 direct product-image URLs, best first
+ "datasheet_url": string|null} // direct PDF, manufacturer/distributor only
+
+Strip marketing fluff from the name. Dev-board variant codes (N16R8 vs N8R2,
+USB-C vs micro-USB) matter - keep them in the name and never mix variants.
+Use null / [] rather than guessing."""
+
+
+def component_from_url(url, categories):
+    """Draft a component definition from a product URL (no DB writes)."""
+    messages = [{
+        'role': 'user',
+        'content': f"Allowed categories: {', '.join(categories)}\n\nProduct URL: {url}",
+    }]
+    client = _client()
+    try:
+        response = client.beta.messages.create(
+            model=MODEL,
+            max_tokens=2500,
+            system=FROM_URL_SYSTEM,
+            tools=[
+                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
+                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 3},
+            ],
+            betas=['web-fetch-2025-09-10'],
+            messages=messages,
+        )
+    except Exception:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=2500,
+            system=FROM_URL_SYSTEM,
+            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4}],
+            messages=messages,
+        )
+    text = ''
+    for block in response.content:
+        if block.type == 'text':
+            text = block.text
+    draft = _extract_json(text)
+    if not draft or not (draft.get('name') or '').strip():
+        return None
+    units = draft.get('units_per_pack')
+    draft['units_per_pack'] = units if isinstance(units, int) and units > 0 else 1
+    if not isinstance(draft.get('specs'), dict):
+        draft['specs'] = {}
+    if not isinstance(draft.get('image_urls'), list):
+        draft['image_urls'] = []
+    return draft
+
+
+def attach_image_from_urls(component, urls):
+    """Download the first working candidate image for a component. Returns bool."""
+    for url in (urls or [])[:3]:
+        try:
+            rel_path = _download_image(component, url)
+        except Exception:
+            rel_path = None
+        if rel_path:
+            component.image = rel_path
+            return True
+    return False

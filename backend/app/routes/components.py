@@ -304,6 +304,46 @@ def upload_component_image(id):
         return {'error': 'Failed to save image'}, 500
 
 
+@components_bp.route('/from-url', methods=['POST'])
+@login_required
+def component_from_url_route():
+    """Draft a component from a product-page URL (Claude web_fetch/search)"""
+    data = request.get_json() or {}
+    url = (data.get('url') or '').strip()
+    if not url.startswith(('http://', 'https://')):
+        return {'error': 'A product URL is required'}, 400
+
+    from app.ingest.enrich import component_from_url
+    categories = [c.name for c in Category.query.order_by(Category.position, Category.name).all()]
+    try:
+        draft = component_from_url(url, categories)
+    except Exception as e:
+        current_app.logger.error(f'from-url failed for {url}: {e}')
+        return {'error': f'Could not read that product page: {e}'}, 502
+    if draft is None:
+        return {'error': 'Could not extract a component from that URL'}, 422
+    if draft.get('category') not in {c for c in categories}:
+        draft['category'] = 'Other'
+    draft['source_url'] = url
+    return {'draft': draft}, 200
+
+
+@components_bp.route('/<int:id>/attach-image', methods=['POST'])
+@login_required
+def attach_component_image(id):
+    """Download a web image (from from-url draft candidates) onto a component"""
+    component = Component.query.get_or_404(id)
+    data = request.get_json() or {}
+    urls = data.get('urls') or ([data['url']] if data.get('url') else [])
+    from app.ingest.enrich import attach_image_from_urls
+    if component.image:
+        return {'component': component.to_dict(), 'attached': False}, 200
+    attached = attach_image_from_urls(component, urls)
+    if attached:
+        db.session.commit()
+    return {'component': component.to_dict(), 'attached': attached}, 200
+
+
 @components_bp.route('/<int:id>/enrich', methods=['POST'])
 @login_required
 def enrich_component_route(id):
