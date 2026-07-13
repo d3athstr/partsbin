@@ -22,6 +22,21 @@ from webauthn import (
     options_to_json,
 )
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
+from webauthn.helpers.cose import COSEAlgorithmIdentifier
+
+# Match GarmentGallery2's (py_webauthn 2.7) algorithm list and order — the
+# 3.x default (EdDSA first, 3 algs) hung Safari's passkey prompt for Don.
+GG_PUB_KEY_ALGS = [
+    COSEAlgorithmIdentifier.ECDSA_SHA_256,
+    COSEAlgorithmIdentifier.EDDSA,
+    COSEAlgorithmIdentifier.ECDSA_SHA_512,
+    COSEAlgorithmIdentifier.RSASSA_PSS_SHA_256,
+    COSEAlgorithmIdentifier.RSASSA_PSS_SHA_384,
+    COSEAlgorithmIdentifier.RSASSA_PSS_SHA_512,
+    COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
+    COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_384,
+    COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_512,
+]
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
     UserVerificationRequirement,
@@ -404,6 +419,7 @@ def passkey_register_options():
         user_name=current_user.username,
         user_display_name=current_user.username,
         exclude_credentials=existing_credentials,
+        supported_pub_key_algs=GG_PUB_KEY_ALGS,
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.PREFERRED,
             user_verification=UserVerificationRequirement.PREFERRED,
