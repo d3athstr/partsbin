@@ -237,7 +237,22 @@ def delete_component(id):
     if component.project_links.count() > 0:
         return {'error': 'Component is used in a project BOM - remove it there first'}, 409
 
+    from app.models.order import OrderItem
+    from app.models.component import StockTransaction
+
     try:
+        # Release order-item links (items return to the review queue) and drop
+        # the stock ledger - it is meaningless without its component.
+        for item in OrderItem.query.filter_by(component_id=component.id).all():
+            item.component_id = None
+            if item.match_status == 'confirmed':
+                item.match_status = 'unmatched'
+        for item in OrderItem.query.filter_by(suggested_component_id=component.id).all():
+            item.suggested_component_id = None
+            if item.match_status == 'suggested':
+                item.match_status = 'unmatched'
+        StockTransaction.query.filter_by(component_id=component.id).delete()
+
         FileService.delete_component_files(component.id)
         db.session.delete(component)
         db.session.commit()
