@@ -115,3 +115,73 @@ def receive_order_items(order, user_id=None, note=None):
         )
         received += 1
     return received, skipped
+
+
+def reverse_item_stock(item, user_id=None):
+    """Take back stock previously landed for an order item.
+
+    Sums the item's transactions per component and issues compensating
+    'adjustment' movements - undoing a wrong match removes exactly what
+    receiving added. Net-zero items are a no-op, so this is idempotent.
+
+    Returns the number of components adjusted.
+
+    Raises:
+        InsufficientStockError: the stock was already consumed elsewhere
+    """
+    from app.models.component import Component
+
+    net = {}
+    for txn in StockTransaction.query.filter_by(order_item_id=item.id):
+        net[txn.component_id] = net.get(txn.component_id, 0) + txn.delta
+
+    adjusted = 0
+    for component_id, delta in net.items():
+        if not delta:
+            continue
+        component = Component.query.get(component_id)
+        if component is None:
+            continue
+        adjust_stock(
+            component, -delta, 'adjustment',
+            user_id=user_id,
+            order_item_id=item.id,
+            note=f'match undone: {(item.raw_title or "")[:80]}',
+        )
+        adjusted += 1
+    return adjusted
+
+
+def receive_single_item(item, user_id=None):
+    """Land stock for one confirmed item on an already-received order.
+
+    Used when a match decision is made (or corrected) after the order was
+    received. Skips when the item already holds net stock on the component,
+    or the same vendor order landed it via another Order row.
+
+    Returns True when stock moved.
+    """
+    if item.match_status != 'confirmed' or not item.component_id:
+        return False
+    if _already_received_elsewhere(item):
+        return False
+    net = db.session.query(
+        db.func.coalesce(db.func.sum(StockTransaction.delta), 0)
+    ).filter(
+        StockTransaction.order_item_id == item.id,
+        StockTransaction.component_id == item.component_id,
+    ).scalar()
+    if net > 0:
+        return False
+    # item.component can be stale right after component_id was reassigned -
+    # resolve by id so a re-match lands stock on the NEW component
+    from app.models.component import Component
+    component = Component.query.get(item.component_id)
+    order = item.order
+    adjust_stock(
+        component, item.qty, 'order_received',
+        user_id=user_id,
+        order_item_id=item.id,
+        note=f'{order.vendor} order {order.vendor_order_no or order.id} (late match)',
+    )
+    return True

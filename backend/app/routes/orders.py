@@ -198,35 +198,61 @@ def update_order(id):
 @orders_bp.route('/<int:id>/items/<int:item_id>', methods=['PUT'])
 @login_required
 def update_order_item(id, item_id):
-    """Match-queue decisions for an item: set component or match_status"""
+    """Match-queue decisions for an item: set component or match_status.
+
+    Works on received orders too: un-matching reverses the stock the item
+    landed, and (re-)confirming lands stock on the newly chosen component,
+    so qty_on_hand always mirrors the match decisions.
+    """
     item = OrderItem.query.filter_by(id=item_id, order_id=id).first_or_404()
     data = request.get_json()
 
     if not data:
         return {'error': 'No data provided'}, 400
 
-    if 'component_id' in data:
-        component = Component.query.get(data.get('component_id') or 0)
-        if not component:
-            return {'error': 'component_id must reference an existing component'}, 400
-        item.component_id = component.id
-        item.match_status = 'confirmed'
-    elif 'match_status' in data:
-        match_status = data['match_status']
-        if match_status == 'confirmed':
-            component_id = item.component_id or item.suggested_component_id
-            if not component_id:
-                return {'error': 'Cannot confirm an item with no matched component'}, 400
-            item.component_id = component_id
+    from app.services.stock_service import (
+        InsufficientStockError, receive_single_item, reverse_item_stock,
+    )
+    order_received = item.order.status == 'received'
+
+    try:
+        if 'component_id' in data:
+            component = Component.query.get(data.get('component_id') or 0)
+            if not component:
+                return {'error': 'component_id must reference an existing component'}, 400
+            if order_received and item.component_id != component.id:
+                reverse_item_stock(item, user_id=current_user.id)
+            item.component_id = component.id
             item.match_status = 'confirmed'
-        elif match_status in ('ignored', 'unmatched'):
-            item.match_status = match_status
-            if match_status == 'unmatched':
-                item.component_id = None
+            if order_received:
+                receive_single_item(item, user_id=current_user.id)
+        elif 'match_status' in data:
+            match_status = data['match_status']
+            if match_status == 'confirmed':
+                component_id = item.component_id or item.suggested_component_id
+                if not component_id:
+                    return {'error': 'Cannot confirm an item with no matched component'}, 400
+                item.component_id = component_id
+                item.match_status = 'confirmed'
+                if order_received:
+                    receive_single_item(item, user_id=current_user.id)
+            elif match_status in ('ignored', 'unmatched'):
+                if order_received:
+                    reverse_item_stock(item, user_id=current_user.id)
+                item.match_status = match_status
+                if match_status == 'unmatched':
+                    item.component_id = None
+                    # "matches nothing existing": drop the suggestion too
+                    if data.get('clear_suggestion'):
+                        item.suggested_component_id = None
+            else:
+                return {'error': 'match_status must be confirmed, ignored or unmatched'}, 400
         else:
-            return {'error': 'match_status must be confirmed, ignored or unmatched'}, 400
-    else:
-        return {'error': 'Provide component_id or match_status'}, 400
+            return {'error': 'Provide component_id or match_status'}, 400
+    except InsufficientStockError as e:
+        db.session.rollback()
+        return {'error': f'Cannot undo this match: {e}. '
+                         'Adjust the component stock first.'}, 409
 
     try:
         db.session.commit()
@@ -267,6 +293,11 @@ def create_component_from_item(id, item_id):
 
         item.component_id = component.id
         item.match_status = 'confirmed'
+
+        # A late match on an already-received order still owes its stock
+        if item.order.status == 'received':
+            from app.services.stock_service import receive_single_item
+            receive_single_item(item, user_id=current_user.id)
 
         db.session.commit()
         return {'component': component.to_dict(), 'item': item.to_dict()}, 201

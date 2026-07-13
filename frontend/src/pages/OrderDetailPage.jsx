@@ -300,9 +300,9 @@ const OrderDetailPage = () => {
                           </p>
                         )}
 
-                        {!isReceived && (
-                          <div className="flex flex-wrap gap-2">
-                            {suggested && (
+                        <div className="flex flex-wrap gap-2">
+                          {suggested && (
+                            <>
                               <button
                                 onClick={() =>
                                   itemMutation.mutate({
@@ -315,45 +315,84 @@ const OrderDetailPage = () => {
                               >
                                 Accept Match
                               </button>
-                            )}
-                            <button
-                              onClick={() => setPickingItem(item)}
-                              className="btn-secondary text-sm py-1.5"
-                            >
-                              Pick Component...
-                            </button>
-                            <button
-                              onClick={() => setCreatingItem(item)}
-                              className="btn-secondary text-sm py-1.5"
-                            >
-                              Create New Component
-                            </button>
-                            <button
-                              onClick={() =>
-                                itemMutation.mutate({
-                                  itemId: item.id,
-                                  payload: { match_status: 'ignored' },
-                                })
-                              }
-                              disabled={itemMutation.isPending}
-                              className="btn-secondary text-sm py-1.5"
-                            >
-                              Ignore
-                            </button>
-                          </div>
+                              <button
+                                onClick={() =>
+                                  itemMutation.mutate({
+                                    itemId: item.id,
+                                    payload: {
+                                      match_status: 'unmatched',
+                                      clear_suggestion: true,
+                                    },
+                                  })
+                                }
+                                disabled={itemMutation.isPending}
+                                className="btn-secondary text-sm py-1.5"
+                              >
+                                Not a Match
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={() => setPickingItem(item)}
+                            className="btn-secondary text-sm py-1.5"
+                          >
+                            Pick Component...
+                          </button>
+                          <button
+                            onClick={() => setCreatingItem(item)}
+                            className="btn-secondary text-sm py-1.5"
+                          >
+                            Create New Component
+                          </button>
+                          <button
+                            onClick={() =>
+                              itemMutation.mutate({
+                                itemId: item.id,
+                                payload: { match_status: 'ignored' },
+                              })
+                            }
+                            disabled={itemMutation.isPending}
+                            className="btn-secondary text-sm py-1.5"
+                          >
+                            Ignore
+                          </button>
+                        </div>
+                        {isReceived && (
+                          <p className="text-xs text-dark-textMuted">
+                            This order was already received — matching this item
+                            will add its stock.
+                          </p>
                         )}
                       </div>
                     )}
 
-                    {/* Allow un-done items to be re-matched while not received */}
-                    {resolved && !isReceived && (
-                      <div className="mt-2 flex gap-2">
+                    {/* Resolved items can be re-matched or undone at any time;
+                        on received orders the backend moves stock to match. */}
+                    {resolved && (
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
                         <button
                           onClick={() => setPickingItem(item)}
                           className="text-xs text-dark-textMuted hover:text-dark-text underline"
                         >
                           change match
                         </button>
+                        <button
+                          onClick={() =>
+                            itemMutation.mutate({
+                              itemId: item.id,
+                              payload: { match_status: 'unmatched' },
+                            })
+                          }
+                          disabled={itemMutation.isPending}
+                          className="text-xs text-dark-textMuted hover:text-dark-text underline"
+                        >
+                          {item.match_status === 'ignored' ? 'un-ignore' : 'undo match'}
+                        </button>
+                        {isReceived && item.match_status === 'confirmed' && (
+                          <span className="text-xs text-dark-textMuted">
+                            (stock adjusts on change/undo)
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
