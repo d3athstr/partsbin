@@ -6,7 +6,7 @@ Orders are upserted by (vendor, order_no, gmail_account):
 Nothing here ever touches component stock - receipt is a human action in the
 review queue (POST /api/orders/<id>/receive).
 """
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from email.utils import parsedate_to_datetime
 
 from flask import current_app
@@ -68,6 +68,22 @@ def _upsert_order(account, message, parsed):
 
         components = Component.query.all()
         for item_data in parsed['items']:
+            # Amazon combines multiple orders into one box, and the "Shipped"
+            # email lists every item in the shipment - including items whose
+            # own order we already recorded. When a non-"ordered" email is
+            # creating this order, skip items that already exist on another
+            # recent order (the "Ordered" email is the authoritative source).
+            if event != 'ordered':
+                ref = order.order_date or date.today()
+                dup = (OrderItem.query.join(Order, OrderItem.order_id == Order.id)
+                       .filter(Order.gmail_account == account,
+                               Order.id != order.id,
+                               Order.order_date.between(
+                                   ref - timedelta(days=45), ref + timedelta(days=45)),
+                               OrderItem.raw_title == item_data['title'])
+                       .first())
+                if dup:
+                    continue
             units = item_data.get('units_per_item', 1)
             item = OrderItem(
                 order_id=order.id,
