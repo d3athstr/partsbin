@@ -21,4 +21,31 @@ const adminService = {
   },
 };
 
+// ==================== User management ====================
+
+adminService.getUsers = async () => {
+  const response = await api.get('/admin/users');
+  return response.data;
+};
+
+adminService.approveUser = async (userId) => {
+  const response = await api.put(`/admin/users/${userId}/approve`);
+  return response.data;
+};
+
+adminService.revokeUser = async (userId) => {
+  const response = await api.put(`/admin/users/${userId}/revoke`);
+  return response.data;
+};
+
+adminService.setGmailAccount = async (userId, account) => {
+  const response = await api.put(`/admin/users/${userId}/gmail-account`, { account });
+  return response.data;
+};
+
+adminService.deleteUser = async (userId) => {
+  const response = await api.delete(`/admin/users/${userId}`);
+  return response.data;
+};
+
 export default adminService;

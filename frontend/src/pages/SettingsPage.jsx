@@ -61,6 +61,13 @@ const SettingsPage = () => {
     enabled: !!user?.is_admin,
   });
 
+  const { data: adminUsersData, isLoading: adminUsersLoading } = useQuery({
+    queryKey: ['adminUsers'],
+    queryFn: () => adminService.getUsers(),
+    enabled: !!user?.is_admin,
+  });
+  const adminUsers = adminUsersData?.users || [];
+
   const { data: ingestData, isLoading: ingestLoading } = useQuery({
     queryKey: ['ingestStatus'],
     queryFn: () => ingestService.status(),
@@ -126,6 +133,21 @@ const SettingsPage = () => {
     mutationFn: (inviteId) => adminService.deleteInvitation(inviteId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminInvitations'] }),
     onError: (err) => flashErr(err, 'Failed to delete invitation'),
+  });
+
+  const userActionMutation = useMutation({
+    mutationFn: ({ action, userId, account }) => {
+      if (action === 'approve') return adminService.approveUser(userId);
+      if (action === 'revoke') return adminService.revokeUser(userId);
+      if (action === 'account') return adminService.setGmailAccount(userId, account);
+      if (action === 'delete') return adminService.deleteUser(userId);
+      return Promise.reject(new Error('unknown action'));
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['adminUsers'] });
+      flash(data?.message || 'User updated');
+    },
+    onError: (err) => flashErr(err, 'Failed to update user'),
   });
 
   const runIngestMutation = useMutation({
@@ -485,6 +507,92 @@ const SettingsPage = () => {
           </div>
         )}
       </div>
+
+      {/* Users (Admin Only) */}
+      {user?.is_admin && (
+        <div className="card mb-6">
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold">Users</h2>
+            <p className="text-dark-textMuted text-sm">
+              Approve registrations and map users to their order-ingest Gmail account
+            </p>
+          </div>
+          {adminUsersLoading ? (
+            <div className="flex justify-center py-6">
+              <div className="w-8 h-8 border-4 border-dark-accent border-t-transparent rounded-full spinner"></div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {adminUsers.map((u) => (
+                <div key={u.id} className="p-4 bg-dark-elevated rounded-lg">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-sm">
+                        {u.username}
+                        {u.is_admin && (
+                          <span className="text-dark-textMuted font-normal"> · admin</span>
+                        )}
+                        {u.id === user.id && (
+                          <span className="text-dark-textMuted font-normal"> · you</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-dark-textMuted">{u.email}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {!u.is_approved && <span className="chip-warn">pending approval</span>}
+                      {u.id !== user.id && (
+                        u.is_approved ? (
+                          <button
+                            onClick={() => userActionMutation.mutate({ action: 'revoke', userId: u.id })}
+                            disabled={userActionMutation.isPending}
+                            className="btn-secondary text-xs"
+                          >
+                            Revoke access
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => userActionMutation.mutate({ action: 'approve', userId: u.id })}
+                            disabled={userActionMutation.isPending}
+                            className="btn-primary text-xs"
+                          >
+                            Approve
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <label className="text-xs text-dark-textMuted">Orders Gmail account:</label>
+                    <select
+                      value={u.gmail_account || ''}
+                      onChange={(e) =>
+                        userActionMutation.mutate({
+                          action: 'account',
+                          userId: u.id,
+                          account: e.target.value || null,
+                        })
+                      }
+                      disabled={userActionMutation.isPending}
+                      className="input text-xs py-1 w-auto"
+                    >
+                      <option value="">none</option>
+                      {ingestAccounts.map((a) => {
+                        const name = a.account || a.user;
+                        return name ? (
+                          <option key={name} value={name}>{name}</option>
+                        ) : null;
+                      })}
+                    </select>
+                    <span className="text-xs text-dark-textMuted">
+                      (controls which orders they see)
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Invitation Codes (Admin Only) */}
       {user?.is_admin && (
