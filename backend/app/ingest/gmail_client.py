@@ -12,13 +12,21 @@ import tempfile
 from datetime import datetime
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-GMAIL_QUERY = (
-    # 'aliexpress' is deliberately bare: Don's AliExpress mail arrives via a
-    # duck.com forwarding alias that rewrites the From address to
-    # <sender>_at_<domain>_<hash>@duck.com, so from:aliexpress.com never matches.
-    'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com) '
-    'newer_than:14d'
+# 'aliexpress' is deliberately bare: Don's AliExpress mail arrives via a
+# duck.com forwarding alias that rewrites the From address to
+# <sender>_at_<domain>_<hash>@duck.com, so from:aliexpress.com never matches.
+GMAIL_QUERY_BASE = (
+    'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com)'
 )
+
+
+def gmail_query():
+    """Vendor query with the lookback window (INGEST_LOOKBACK, default 14d).
+
+    Override per-run for backfills, e.g. INGEST_LOOKBACK=2y flask ingest run.
+    ProcessedMessage rows keep re-runs idempotent.
+    """
+    return f"{GMAIL_QUERY_BASE} newer_than:{os.getenv('INGEST_LOOKBACK', '14d')}"
 
 
 def tokens_path():
@@ -295,7 +303,7 @@ def poll_account(user, known_ids):
     page_token = None
     while True:
         resp = service.users().messages().list(
-            userId='me', q=GMAIL_QUERY, pageToken=page_token, maxResults=100,
+            userId='me', q=gmail_query(), pageToken=page_token, maxResults=100,
         ).execute()
         message_ids.extend(m['id'] for m in resp.get('messages', []))
         page_token = resp.get('nextPageToken')
