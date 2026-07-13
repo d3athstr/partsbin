@@ -117,10 +117,12 @@ def build_flow(state=None):
 def get_auth_url(user):
     """Return (authorization_url, state, code_verifier) for a re-auth flow"""
     flow = build_flow()
+    # No include_granted_scopes: the GCP client is shared with the voice
+    # assistant, and merging its broader grants into this token makes Google
+    # return extra scopes that oauthlib rejects as a scope change.
     auth_url, state = flow.authorization_url(
         access_type='offline',
         prompt='consent',  # force a refresh_token on every re-auth
-        include_granted_scopes='true',
     )
     # google-auth-oauthlib >= 1.0 auto-enables PKCE: the verifier generated
     # here must be handed back to the callback's Flow or Google rejects the
@@ -130,6 +132,9 @@ def get_auth_url(user):
 
 def handle_callback(user, code, state=None, code_verifier=None):
     """Exchange the OAuth code, persist the token, return the account email"""
+    # Tolerate Google returning a superset of the requested scopes (shared
+    # client with prior grants); oauthlib otherwise raises "Scope has changed".
+    os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
     flow = build_flow(state=state)
     flow.code_verifier = code_verifier
     flow.fetch_token(code=code)
