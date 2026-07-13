@@ -135,7 +135,7 @@ const InventoryPage = () => {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>Inventory</h1>
         <button onClick={() => setShowUrlModal(true)} className="btn-secondary">
-          Add from URL
+          Add from URL/Title
         </button>
         <Link to="/inventory/new" className="btn-primary">
           Add Component
@@ -216,12 +216,12 @@ const InventoryPage = () => {
         <div className="card border border-dark-border">
           <form onSubmit={handleFromUrl} className="flex flex-col sm:flex-row gap-3">
             <input
-              type="url"
+              type="text"
               required
               autoFocus
               value={productUrl}
               onChange={(e) => setProductUrl(e.target.value)}
-              placeholder="Paste an Amazon / AliExpress / Adafruit / Mouser / DigiKey product URL"
+              placeholder="Paste a product URL - or the product title (AliExpress blocks URL reads)"
               className="input flex-1"
             />
             <button type="submit" disabled={urlBusy} className="btn-primary">

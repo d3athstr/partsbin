@@ -325,8 +325,8 @@ def component_from_url_route():
     """Draft a component from a product-page URL (Claude web_fetch/search)"""
     data = request.get_json() or {}
     url = (data.get('url') or '').strip()
-    if not url.startswith(('http://', 'https://')):
-        return {'error': 'A product URL is required'}, 400
+    if not url:
+        return {'error': 'A product URL or product title is required'}, 400
 
     from app.ingest.enrich import component_from_url
     categories = [c.name for c in Category.query.order_by(Category.position, Category.name).all()]
@@ -336,7 +336,12 @@ def component_from_url_route():
         current_app.logger.error(f'from-url failed for {url}: {e}')
         return {'error': f'Could not read that product page: {e}'}, 502
     if draft is None:
-        return {'error': 'Could not extract a component from that URL'}, 422
+        if 'aliexpress' in url.lower():
+            return {'error': 'AliExpress blocks automated readers and its URLs '
+                             'carry no product info - paste the product TITLE '
+                             'from the listing instead'}, 422
+        return {'error': 'Could not extract a component - try pasting the '
+                         'product title instead of the URL'}, 422
     if draft.get('category') not in {c for c in categories}:
         draft['category'] = 'Other'
     draft['source_url'] = url

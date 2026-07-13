@@ -252,11 +252,16 @@ USB-C vs micro-USB) matter - keep them in the name and never mix variants.
 Use null / [] rather than guessing."""
 
 
-def component_from_url(url, categories):
-    """Draft a component definition from a product URL (no DB writes)."""
+def component_from_url(source, categories):
+    """Draft a component from a product URL or a pasted title (no DB writes)."""
+    if source.startswith(('http://', 'https://')):
+        task = f'Product URL: {source}'
+    else:
+        task = (f'Product title/description (no URL available - identify it '
+                f'via web search): {source}')
     messages = [{
         'role': 'user',
-        'content': f"Allowed categories: {', '.join(categories)}\n\nProduct URL: {url}",
+        'content': f"Allowed categories: {', '.join(categories)}\n\n{task}",
     }]
     client = _client()
     try:
