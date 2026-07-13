@@ -15,8 +15,12 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # 'aliexpress' is deliberately bare: Don's AliExpress mail arrives via a
 # duck.com forwarding alias that rewrites the From address to
 # <sender>_at_<domain>_<hash>@duck.com, so from:aliexpress.com never matches.
+# $INGEST_FORWARD_ADDRESS: Don's Outlook address auto-forwards his Adafruit
+# order mail into Gmail; forwards carry HIS address in From, not adafruit.com.
+# Non-order mail forwarded from there is discarded by the Claude parser.
 GMAIL_QUERY_BASE = (
-    'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com) '
+    'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
+    'OR $INGEST_FORWARD_ADDRESS) '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )
 
