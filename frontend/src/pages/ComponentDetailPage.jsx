@@ -26,6 +26,9 @@ const ComponentDetailPage = () => {
   const [note, setNote] = useState('');
   const [actionError, setActionError] = useState('');
   const [enrichNote, setEnrichNote] = useState('');
+  const [showLookup, setShowLookup] = useState(false);
+  const [lookupQuery, setLookupQuery] = useState('');
+  const [candidates, setCandidates] = useState(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['component', id],
@@ -100,6 +103,48 @@ const ComponentDetailPage = () => {
     },
   });
 
+  const lookupMutation = useMutation({
+    mutationFn: (query) => componentService.lookup(id, query),
+    onSuccess: (res) => {
+      setCandidates(res?.candidates || []);
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Lookup failed')),
+  });
+
+  const applyCandidateMutation = useMutation({
+    mutationFn: (candidate) => componentService.applyCandidate(id, candidate),
+    onSuccess: (res) => {
+      invalidate();
+      const r = res?.applied || {};
+      const changed = [
+        r.image && 'image',
+        r.datasheet && 'datasheet',
+        r.manufacturer && 'manufacturer',
+        r.mpn && 'part number',
+        r.description && 'description',
+        r.specs > 0 && `${r.specs} spec${r.specs === 1 ? '' : 's'}`,
+      ].filter(Boolean);
+      setEnrichNote(changed.length ? `Applied: ${changed.join(', ')}.` : 'Candidate had nothing new to apply.');
+      setShowLookup(false);
+      setCandidates(null);
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Failed to apply candidate')),
+  });
+
+  const handleLookup = (e) => {
+    e.preventDefault();
+    setCandidates(null);
+    lookupMutation.mutate(lookupQuery.trim());
+  };
+
+  const openLookup = () => {
+    setLookupQuery(component.name || '');
+    setCandidates(null);
+    setShowLookup(true);
+  };
+
   const handleDelete = () => {
     if (window.confirm(`Delete "${component.name}"? This cannot be undone.`)) {
       deleteMutation.mutate();
@@ -135,6 +180,9 @@ const ComponentDetailPage = () => {
           </p>
         </div>
         <div className="flex gap-2">
+          <button onClick={openLookup} className="btn-secondary" title="Web-search this part with your own terms and pick from candidate matches">
+            Look Up
+          </button>
           <button
             onClick={() => enrichMutation.mutate()}
             disabled={enrichMutation.isPending}
@@ -159,6 +207,88 @@ const ComponentDetailPage = () => {
       {actionError && <div className="alert-error">{actionError}</div>}
       {enrichNote && (
         <div className="card py-2 px-3 text-sm text-dark-textMuted">{enrichNote}</div>
+      )}
+
+      {showLookup && (
+        <div className="card space-y-4">
+          <form onSubmit={handleLookup} className="flex flex-col sm:flex-row gap-3">
+            <input
+              type="text"
+              autoFocus
+              value={lookupQuery}
+              onChange={(e) => setLookupQuery(e.target.value)}
+              placeholder="Search terms, e.g. part number, brand, connector type..."
+              className="input flex-1"
+            />
+            <button type="submit" disabled={lookupMutation.isPending} className="btn-primary">
+              {lookupMutation.isPending ? 'Searching...' : 'Search'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowLookup(false); setCandidates(null); }}
+              className="btn-secondary"
+            >
+              Close
+            </button>
+          </form>
+          {lookupMutation.isPending && (
+            <p className="text-xs text-dark-textMuted">
+              Claude is searching the web - this takes 10-30 seconds.
+            </p>
+          )}
+          {candidates && candidates.length === 0 && (
+            <p className="text-sm text-dark-textMuted">No candidates found - try different terms.</p>
+          )}
+          {candidates && candidates.length > 0 && (
+            <div className="space-y-3">
+              {candidates.map((cand, i) => (
+                <div key={i} className="flex gap-4 p-3 bg-dark-elevated rounded-lg items-start">
+                  {cand.image_urls?.[0] && (
+                    <img
+                      src={cand.image_urls[0]}
+                      alt=""
+                      className="w-16 h-16 object-contain rounded bg-dark-bg flex-shrink-0"
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{cand.title}</p>
+                    <p className="text-xs text-dark-textMuted">
+                      {[cand.manufacturer, cand.mpn].filter(Boolean).join(' · ')}
+                    </p>
+                    {cand.description && (
+                      <p className="text-sm text-dark-textMuted mt-1">{cand.description}</p>
+                    )}
+                    <p className="text-xs mt-1 space-x-3">
+                      {cand.source_url && (
+                        <a href={cand.source_url} target="_blank" rel="noreferrer" className="link">
+                          source page
+                        </a>
+                      )}
+                      {cand.datasheet_url && (
+                        <a href={cand.datasheet_url} target="_blank" rel="noreferrer" className="link">
+                          datasheet
+                        </a>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => applyCandidateMutation.mutate(cand)}
+                    disabled={applyCandidateMutation.isPending}
+                    className="btn-primary flex-shrink-0"
+                  >
+                    {applyCandidateMutation.isPending ? 'Applying...' : 'Apply'}
+                  </button>
+                </div>
+              ))}
+              <p className="text-xs text-dark-textMuted">
+                Apply replaces the image and datasheet with the candidate's, fills empty
+                manufacturer / part number / description, and merges new specs. Your
+                component name and stock are never changed.
+              </p>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="grid lg:grid-cols-3 gap-6">

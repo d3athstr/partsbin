@@ -344,6 +344,41 @@ def attach_component_image(id):
     return {'component': component.to_dict(), 'attached': attached}, 200
 
 
+@components_bp.route('/<int:id>/lookup', methods=['POST'])
+@login_required
+def lookup_component(id):
+    """Web-search candidate identifications with a user-provided hint"""
+    component = Component.query.get_or_404(id)
+    data = request.get_json() or {}
+    hint = (data.get('query') or '').strip()
+    from app.ingest.enrich import search_component_candidates
+    try:
+        candidates = search_component_candidates(component, hint)
+    except Exception as e:
+        current_app.logger.error(f'Lookup failed for component {id}: {e}')
+        return {'error': f'Lookup failed: {e}'}, 502
+    return {'candidates': candidates}, 200
+
+
+@components_bp.route('/<int:id>/apply-candidate', methods=['POST'])
+@login_required
+def apply_component_candidate(id):
+    """Apply a user-chosen lookup candidate (image/datasheet replace, rest fills)"""
+    component = Component.query.get_or_404(id)
+    data = request.get_json() or {}
+    candidate = data.get('candidate')
+    if not isinstance(candidate, dict):
+        return {'error': 'candidate object required'}, 400
+    from app.ingest.enrich import apply_candidate
+    try:
+        result = apply_candidate(component, candidate)
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Apply candidate failed for component {id}: {e}')
+        return {'error': 'Failed to apply candidate'}, 500
+    return {'applied': result, 'component': component.to_dict()}, 200
+
+
 @components_bp.route('/<int:id>/enrich', methods=['POST'])
 @login_required
 def enrich_component_route(id):

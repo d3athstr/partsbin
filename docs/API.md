@@ -45,6 +45,11 @@ PUT /api/orders/<id> {status, tracking_no, carrier, notes}   # manual edits; sta
 POST /api/orders  (manual order entry, same shape as parsed)
 PUT /api/orders/<id>/items/<item_id> {component_id | match_status: confirmed|ignored}
 POST /api/orders/<id>/items/<item_id>/create-component {overrides...}  # new component from item, auto-confirms
+POST /api/components/from-url {url}              # Claude drafts a component from a product page (no DB write)
+POST /api/components/<id>/attach-image {urls}    # download first working candidate image
+POST /api/components/<id>/lookup {query}         # web-search candidate identifications (user hint)
+POST /api/components/<id>/apply-candidate {candidate}  # replace image/datasheet, fill empty meta, merge specs
+POST /api/components/<id>/enrich                 # auto: image + datasheet + missing metadata
 POST /api/orders/<id>/auto-create-components  # Claude infers a component per pending item (name/category/specs),
                                               # links suggestions/fuzzy matches instead of duplicating, multiplies
                                               # item qty by detected pack size ("100pcs" → qty×100). No stock moves.

@@ -306,3 +306,111 @@ def attach_image_from_urls(component, urls):
             component.image = rel_path
             return True
     return False
+
+
+LOOKUP_SYSTEM = """You identify electronic components. Given an inventory \
+component (possibly mis-identified) and the user's search hint, use web \
+search (and fetch promising pages) to find CANDIDATE product identifications.
+
+Respond with ONLY one JSON object, no prose, no markdown fences:
+{"candidates": [
+  {"title": string,             // the product as sold, concise
+   "manufacturer": string|null,
+   "mpn": string|null,
+   "description": string|null,  // one short sentence
+   "source_url": string|null,   // page you identified it from
+   "image_urls": [string, ...], // up to 2 direct image URLs
+   "datasheet_url": string|null,// direct PDF, manufacturer/distributor only
+   "specs": {}}                 // short key/value strings
+]}
+
+Return up to 4 DISTINCT candidates, most likely first. Variants (N16R8 vs
+N8R2, USB-C vs micro-USB) are different candidates - never blur them.
+Use null / [] rather than guessing."""
+
+
+def search_component_candidates(component, hint):
+    """Web-search candidate identifications for a component. Returns a list."""
+    prompt = (
+        f'Inventory component: {component.name}\n'
+        f'Category: {component.category}\n'
+        f'Manufacturer: {component.manufacturer or "?"} | MPN: {component.mpn or "?"}\n'
+        f'Specs: {json.dumps(component.specs or {})}\n\n'
+        f'User search hint: {hint or component.name}'
+    )
+    client = _client()
+    try:
+        response = client.beta.messages.create(
+            model=MODEL, max_tokens=3000, system=LOOKUP_SYSTEM,
+            tools=[
+                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4},
+                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
+            ],
+            betas=['web-fetch-2025-09-10'],
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+    except Exception:
+        response = client.messages.create(
+            model=MODEL, max_tokens=3000, system=LOOKUP_SYSTEM,
+            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 5}],
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+    text = ''
+    for block in response.content:
+        if block.type == 'text':
+            text = block.text
+    data = _extract_json(text) or {}
+    out = []
+    for cand in (data.get('candidates') or [])[:4]:
+        if isinstance(cand, dict) and (cand.get('title') or '').strip():
+            if not isinstance(cand.get('specs'), dict):
+                cand['specs'] = {}
+            if not isinstance(cand.get('image_urls'), list):
+                cand['image_urls'] = []
+            out.append(cand)
+    return out
+
+
+def apply_candidate(component, candidate):
+    """Apply a user-chosen lookup candidate to a component.
+
+    The user explicitly picked this identification, so image and datasheet
+    REPLACE what's there; manufacturer/mpn/description fill only when empty
+    (the name stays the user's to edit); new spec keys merge in.
+    """
+    result = {'image': False, 'datasheet': False, 'manufacturer': False,
+              'mpn': False, 'description': False, 'specs': 0}
+
+    if candidate.get('image_urls'):
+        old = component.image
+        component.image = None
+        if attach_image_from_urls(component, candidate['image_urls']):
+            result['image'] = True
+        else:
+            component.image = old
+
+    ds = candidate.get('datasheet_url')
+    if ds and _datasheet_ok(ds):
+        component.datasheet_url = str(ds)[:500]
+        result['datasheet'] = True
+
+    for field, limit in (('manufacturer', 100), ('mpn', 100), ('description', None)):
+        value = candidate.get(field)
+        if value and not getattr(component, field):
+            value = str(value).strip()
+            setattr(component, field, value[:limit] if limit else value)
+            result[field] = True
+
+    new_specs = candidate.get('specs')
+    if isinstance(new_specs, dict):
+        specs = dict(component.specs or {})
+        for key, value in new_specs.items():
+            if key not in specs and isinstance(value, (str, int, float)) and str(value).strip():
+                specs[str(key)[:60]] = str(value).strip()[:100]
+                result['specs'] += 1
+        if result['specs']:
+            component.specs = specs
+
+    if any(result.values()):
+        db.session.commit()
+    return result

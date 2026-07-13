@@ -63,6 +63,18 @@ const componentService = {
     return response.data;
   },
 
+  /** Web-search candidate identifications with a user hint. */
+  lookup: async (id, query) => {
+    const response = await api.post(`/components/${id}/lookup`, { query });
+    return response.data;
+  },
+
+  /** Apply a chosen lookup candidate to the component. */
+  applyCandidate: async (id, candidate) => {
+    const response = await api.post(`/components/${id}/apply-candidate`, { candidate });
+    return response.data;
+  },
+
   /** Web-search image/datasheet/missing metadata for a component. */
   enrich: async (id) => {
     const response = await api.post(`/components/${id}/enrich`);
