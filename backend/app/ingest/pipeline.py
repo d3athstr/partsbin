@@ -45,10 +45,12 @@ def _upsert_order(account, message, parsed):
             vendor=vendor, tracking_no=parsed['tracking'], gmail_account=account,
         ).first()
 
-    if order is None and not order_no and event in ('shipped', 'delivered'):
-        # Tracking-status noise: the real order always arrives with a number
-        # in its confirmation email. Creating a numberless twin here is how
-        # stock gets counted twice - drop it.
+    if order is None and event != 'ordered':
+        # Only the initial order-confirmation email may CREATE an order.
+        # Shipped/delivered notifications merely upgrade one we already have
+        # (matched above by order number or tracking number) - letting them
+        # create orders/items is how stock got confused (combined shipments,
+        # per-package tracking blasts). No match -> drop.
         return None
 
     if order is None:
