@@ -30,7 +30,8 @@ fences. The schema is:
     {"title": string, "qty": integer, "unit_price": number | null,
      "units_per_item": integer,   // physical units in ONE line-item qty:
                                   // "100Pcs 10k Resistor" -> 100, else 1
-     "is_component": boolean}     // plausibly electronics/maker inventory?
+     "is_component": boolean,     // plausibly electronics/maker inventory?
+     "is_kit": boolean}           // assortment kit of VARYING parts?
   ],
   "tracking": string | null,    // tracking number if present
   "carrier": string | null,     // carrier name if present (UPS, USPS, FedEx, ...)
@@ -51,6 +52,13 @@ Rules:
   soldering/prototyping supplies, enclosures, fasteners, 3D-printing gear.
   false for clearly unrelated goods: food, pet supplies, clothing, household,
   toiletries, media. When unsure, use true (a human reviews).
+- is_kit: true ONLY for assortments of VARYING parts - mixed values, sizes or
+  colors meant to be stocked separately ("525pcs resistor kit 17 values",
+  "M2.5 standoff & screw & nut kit", "heat shrink assortment", "LED kit 10
+  colors"). A multipack of ONE identical part ("100pcs 10k resistor",
+  "5-pack D1 Mini") is NOT a kit. A single product whose box has accessories
+  (dev board + cable) is NOT a kit. For kits set units_per_item=1 so qty
+  counts KITS, never loose pieces.
 - If is_order is false, all other fields may be null/empty."""
 
 
@@ -120,9 +128,11 @@ def _normalize(parsed):
             units = max(int(item.get('units_per_item') or 1), 1)
         except (ValueError, TypeError):
             units = 1
+        is_kit = bool(item.get('is_kit', False))
         items.append({'title': title, 'qty': qty, 'unit_price': unit_price,
-                      'units_per_item': units,
-                      'is_component': bool(item.get('is_component', True))})
+                      'units_per_item': 1 if is_kit else units,
+                      'is_component': bool(item.get('is_component', True)),
+                      'is_kit': is_kit})
 
     order_no = parsed.get('order_no')
 
@@ -208,7 +218,8 @@ Respond with ONLY a single JSON object - no prose, no markdown fences:
       "description": string|null,  // one short sentence, only if it adds information
       "specs": {  },               // key/value specs pulled from the title, e.g.
                                    // {"resistance": "10k", "tolerance": "1%", "package": "0603"}
-      "units_per_item": integer    // units in ONE ordered item: "100pcs ..." -> 100, else 1
+      "units_per_item": integer,   // units in ONE ordered item: "100pcs ..." -> 100, else 1
+      "is_kit": boolean            // assortment of VARYING values/sizes/colors?
     }
   ]
 }
@@ -217,8 +228,11 @@ Rules:
 - Names should be searchable and deduplicatable: value + key spec + package/form
   factor. Strip marketing fluff ("Hot Sale", "for Arduino DIY Kit", emoji).
 - Multi-packs: "5PCS ESP32-S3 DevKitC" -> name the single unit, units_per_item=5.
-- Assorted kits (e.g. "600pcs resistor kit 10ohm-1M") stay ONE component
-  (category fits the parts, units_per_item=1) - do not explode kits.
+- Assorted kits of VARYING parts (e.g. "600pcs resistor kit 10ohm-1M",
+  "standoff & screw & nut kit", "heat shrink assortment"): set is_kit=true
+  and units_per_item=1, and still return ONE definition describing the kit
+  (the caller explodes kits separately). A multipack of one identical part
+  is NOT a kit (is_kit=false, units_per_item=pack size).
 - If a title is not really an electronic component (gift, household item),
   still return an entry with your best category ("Other") - the human decides.
 - specs values are short strings; omit unknown fields rather than guessing."""
@@ -268,5 +282,6 @@ def infer_components(titles, categories):
             continue
         units = comp.get('units_per_item')
         comp['units_per_item'] = units if isinstance(units, int) and units > 0 else 1
+        comp['is_kit'] = bool(comp.get('is_kit', False))
         results.append(comp)
     return results

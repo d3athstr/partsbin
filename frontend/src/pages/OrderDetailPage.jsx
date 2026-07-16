@@ -258,7 +258,19 @@ const OrderDetailPage = () => {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium break-words">{item.raw_title}</p>
+                      <p className="text-sm font-medium break-words">
+                        {item.raw_title}
+                        {item.is_kit && (
+                          <span className="ml-2 align-middle text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-dark-border text-dark-textMuted">
+                            kit
+                          </span>
+                        )}
+                        {item.parent_item_id && (
+                          <span className="ml-2 align-middle text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-dark-border text-dark-textMuted">
+                            kit part
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-dark-textMuted mt-0.5 tabular-nums">
                         qty {item.qty ?? 1}
                         {item.unit_price != null && ` · ${fmtMoney(item.unit_price)} each`}
@@ -278,7 +290,9 @@ const OrderDetailPage = () => {
                       </p>
                     ) : item.match_status === 'ignored' ? (
                       <p className="text-sm text-dark-textMuted">
-                        Ignored — will not affect stock.
+                        {item.is_kit
+                          ? 'Kit — exploded into individual part items on this order.'
+                          : 'Ignored — will not affect stock.'}
                       </p>
                     ) : (
                       <div className="space-y-2">

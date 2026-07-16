@@ -93,10 +93,17 @@ def _upsert_order(account, message, parsed):
                 qty=item_data['qty'] * units,
                 qty_is_units=True,
                 unit_price=item_data.get('unit_price'),
+                is_kit=bool(item_data.get('is_kit')),
             )
             if not item_data.get('is_component', True):
                 # Dog treats et al: never part of inventory, never reviewed
                 item.match_status = 'ignored'
+                db.session.add(item)
+                continue
+            if item.is_kit:
+                # Assortment kits never auto-confirm (a lump-sum "525 pcs"
+                # stock line is useless) - they wait in the review queue,
+                # where auto-create explodes them into per-part child items.
                 db.session.add(item)
                 continue
             match_id, score = best_match(item_data['title'], components=components)

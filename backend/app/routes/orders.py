@@ -379,11 +379,99 @@ def auto_create_components(id):
         current_app.logger.error(f'Component inference failed: {e}')
         return {'error': f'Claude inference failed: {e}'}, 502
 
-    created, linked, failed = [], [], []
+    created, linked, failed, exploded = [], [], [], []
     known_components = Component.query.all()
+
+    # Assortment kits explode into per-part child items instead of landing in
+    # stock as one lump. Web-research their real contents up front (parallel -
+    # each is a Claude call with web search, ~30-60s).
+    kit_pairs = [(item, comp_def) for item, comp_def in zip(pending, inferred)
+                 if item.is_kit or (comp_def and comp_def.get('is_kit'))]
+    breakdowns = {}
+    if kit_pairs:
+        from concurrent.futures import ThreadPoolExecutor
+        from app.ingest.kit_breakout import research_kit_contents
+        with ThreadPoolExecutor(max_workers=min(4, len(kit_pairs))) as pool:
+            futures = {
+                item.id: pool.submit(research_kit_contents, item.raw_title or '',
+                                     categories, order.vendor)
+                for item, _ in kit_pairs
+            }
+            for item_id, future in futures.items():
+                try:
+                    breakdowns[item_id] = future.result()
+                except Exception as e:
+                    current_app.logger.error(f'kit research failed for item {item_id}: {e}')
+                    breakdowns[item_id] = None
+
+    def _component_for(defn, name_key='name'):
+        """Match a definition against inventory or create it (qty 0)."""
+        match_id = suggest_component(defn[name_key], components=known_components)
+        if match_id:
+            return match_id, False
+        category = defn.get('category') or 'Other'
+        if category not in valid_categories:
+            category = 'Other'
+        specs = defn.get('specs')
+        component = Component(
+            name=defn[name_key].strip()[:200],
+            category=category,
+            manufacturer=(defn.get('manufacturer') or None),
+            mpn=(defn.get('mpn') or None),
+            description=(defn.get('description') or None),
+            specs=specs if isinstance(specs, dict) else {},
+            user_id=current_user.id,
+        )
+        db.session.add(component)
+        db.session.flush()
+        known_components.append(component)
+        return component.id, True
 
     try:
         for item, comp_def in zip(pending, inferred):
+            breakdown = breakdowns.get(item.id)
+            if breakdown and breakdown['found']:
+                # Explode the kit: one child OrderItem per part, each matched
+                # or created like a normal item. The kit item itself goes to
+                # 'ignored' so receive lands stock only on the parts.
+                kits = item.qty or 1
+                total = breakdown.get('total_pieces')
+                if item.qty_is_units and total and kits >= total and kits % total == 0:
+                    # Legacy rows where the pack size was folded into qty
+                    kits //= total
+                for part in breakdown['parts']:
+                    component_id, was_created = _component_for(part)
+                    child = OrderItem(
+                        order_id=order.id,
+                        raw_title=part['name'],
+                        qty=kits * part['qty_per_kit'],
+                        qty_is_units=True,
+                        match_status='confirmed',
+                        component_id=component_id,
+                        parent_item_id=item.id,
+                    )
+                    db.session.add(child)
+                    if was_created:
+                        created.append({'item_id': item.id, 'component_id': component_id,
+                                        'name': part['name'], 'category': part['category']})
+                    else:
+                        linked.append({'item_id': item.id, 'component_id': component_id,
+                                       'via': 'kit part'})
+                item.match_status = 'ignored'
+                item.component_id = None
+                item.is_kit = True
+                exploded.append({'item_id': item.id, 'title': item.raw_title,
+                                 'parts': len(breakdown['parts']), 'kits': kits,
+                                 'confidence': breakdown['confidence'],
+                                 'source_url': breakdown['source_url']})
+                continue
+            if item.is_kit or (comp_def and comp_def.get('is_kit')):
+                # Research came back empty/unverified: stock the kit whole
+                # (pre-breakout behavior) rather than invent a breakdown.
+                current_app.logger.warning(
+                    f'kit breakout unverified for item {item.id} '
+                    f'({(item.raw_title or "")[:60]!r}); keeping kit whole')
+
             # An ingest-time fuzzy suggestion wins - link it instead of creating a twin
             if item.suggested_component_id:
                 item.component_id = item.suggested_component_id
@@ -472,6 +560,7 @@ def auto_create_components(id):
         Thread(target=_enrich_bg, daemon=True).start()
 
     return {'created': created, 'linked': linked, 'failed': failed,
+            'exploded': exploded,
             'received': received, 'skipped_duplicates': skipped_duplicates,
             'order': order.to_dict(include_items=True)}, 200
 

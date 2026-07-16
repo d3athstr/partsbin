@@ -94,6 +94,12 @@ class OrderItem(db.Model):
     # True when qty already counts physical units (pack size folded in at parse
     # time); guards against multiplying again in auto-create.
     qty_is_units = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    # Assortment kit of varying values/sizes (resistor kit, standoff kit...):
+    # never auto-confirmed at ingest; auto-create explodes it into per-part
+    # child items instead of stocking it as one lump.
+    is_kit = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    # Set on items created by exploding a kit -> the kit OrderItem they came from
+    parent_item_id = db.Column(db.Integer, db.ForeignKey('order_item.id'), nullable=True)
     suggested_component_id = db.Column(db.Integer, db.ForeignKey('component.id'), nullable=True)
     component_id = db.Column(db.Integer, db.ForeignKey('component.id'), nullable=True)
 
@@ -115,6 +121,8 @@ class OrderItem(db.Model):
             'qty': self.qty,
             'unit_price': float(self.unit_price) if self.unit_price is not None else None,
             'match_status': self.match_status,
+            'is_kit': self.is_kit,
+            'parent_item_id': self.parent_item_id,
             'suggested_component_id': self.suggested_component_id,
             'suggested_component': self.suggested_component.to_summary() if self.suggested_component else None,
             'component_id': self.component_id,
