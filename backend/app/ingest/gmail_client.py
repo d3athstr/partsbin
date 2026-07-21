@@ -18,9 +18,16 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # $INGEST_FORWARD_ADDRESS: Don's Outlook address auto-forwards his Adafruit
 # order mail into Gmail; forwards carry HIS address in From, not adafruit.com.
 # Non-order mail forwarded from there is discarded by the Claude parser.
+# in:anywhere -in:spam: order mail deleted from the inbox before the next
+# 30-min ingest run is otherwise invisible (Gmail search skips Trash by
+# default) and never gets an order row — happened to Amazon order
+# 111-9687910-0033853 on 2026-07-14, trashed within 18 min of arrival.
+# Trash retains 30 days, well past the 14d lookback. Spam stays excluded:
+# spoofed-From phishing there would otherwise reach the parser.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
     'OR $INGEST_FORWARD_ADDRESS) '
+    'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )
 
