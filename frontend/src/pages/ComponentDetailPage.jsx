@@ -357,16 +357,28 @@ const ComponentDetailPage = () => {
               <p className="text-sm text-dark-textMuted">Not used in any projects.</p>
             ) : (
               <ul className="space-y-1">
-                {usedIn.map((p) => (
-                  <li key={p.id}>
-                    <Link to={`/projects/${p.id}`} className="link text-sm">
-                      {p.name}
-                    </Link>
-                    {p.status && (
-                      <span className="chip-neutral ml-2">{p.status}</span>
-                    )}
-                  </li>
-                ))}
+                {usedIn.map((entry) => {
+                  // Backend nests the project summary; tolerate a flat shape too
+                  const proj = entry.project || entry;
+                  if (!proj?.id) return null;
+                  return (
+                    <li key={proj.id} className="flex items-center justify-between gap-2">
+                      <div>
+                        <Link to={`/projects/${proj.id}`} className="link text-sm">
+                          {proj.name}
+                        </Link>
+                        {proj.status && (
+                          <span className="chip-neutral ml-2">{proj.status}</span>
+                        )}
+                      </div>
+                      {entry.qty_planned != null && (
+                        <span className="text-xs text-dark-textMuted whitespace-nowrap">
+                          {entry.qty_used || 0} / {entry.qty_planned} used
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
