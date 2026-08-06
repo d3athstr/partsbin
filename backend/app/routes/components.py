@@ -7,7 +7,8 @@ from app.models.category import Category
 from app.models.tag import Tag
 from app.services.file_service import FileService
 from app.services.stock_service import adjust_stock, InsufficientStockError
-from app.routes import paginate_query
+from app.services import cost_service
+from app.routes import paginate_query, parse_money
 
 components_bp = Blueprint('components', __name__)
 catalog_bp = Blueprint('catalog', __name__)
@@ -18,6 +19,8 @@ COMPONENT_SORTS = {
     'category': Component.category,
     'qty_on_hand': Component.qty_on_hand,
     'location': Component.location,
+    'est_unit_cost': Component.est_unit_cost,
+    'last_unit_cost': Component.last_unit_cost,
     'created_at': Component.created_at,
     'updated_at': Component.updated_at,
 }
@@ -62,6 +65,14 @@ def _set_fields(component, data):
             component.min_qty = max(int(data['min_qty']), 0)
         except (ValueError, TypeError):
             raise ValueError('min_qty must be an integer')
+
+    # Only the ESTIMATE is settable - the actual cost is derived from order
+    # history by cost_service and would be overwritten on the next refresh.
+    if 'est_unit_cost' in data:
+        cost_service.set_estimated_cost(
+            component, parse_money(data['est_unit_cost'], 'est_unit_cost'),
+            source='manual',
+        )
 
     if 'tags' in data and isinstance(data['tags'], list):
         _apply_tags(component, data['tags'])
@@ -148,6 +159,21 @@ def get_component(id):
         }
         for it in order_items
     ]
+
+    data['cost'] = {
+        'currency': 'USD',
+        'est_unit_cost': data['est_unit_cost'],
+        'est_cost_source': component.est_cost_source,
+        'est_cost_at': data['est_cost_at'],
+        'last_unit_cost': data['last_unit_cost'],
+        'last_cost_at': data['last_cost_at'],
+        'last_cost_vendor': component.last_cost_vendor,
+        'last_cost_order_id': component.last_cost_order_id,
+        'unit_cost': data['unit_cost'],
+        'cost_basis': data['cost_basis'],
+        'stock_value': data['stock_value'],
+        'history': cost_service.price_history(component.id),
+    }
     return data, 200
 
 
@@ -208,6 +234,10 @@ def update_component(id):
 
     if 'qty_on_hand' in data and data['qty_on_hand'] != component.qty_on_hand:
         return {'error': 'qty_on_hand cannot be edited directly - use POST /adjust'}, 400
+
+    if 'last_unit_cost' in data:
+        return {'error': 'last_unit_cost is derived from order history and cannot '
+                         'be edited - set est_unit_cost instead'}, 400
 
     if 'category' in data and not _validate_category((data.get('category') or '').strip()):
         return {'error': 'category must be one of the seeded categories'}, 400
@@ -411,6 +441,58 @@ def enrich_component_route(id):
         current_app.logger.error(f'Enrich failed for component {id}: {e}')
         return {'error': f'Enrichment failed: {e}'}, 502
     return {'enriched': result, 'component': component.to_dict()}, 200
+
+
+@components_bp.route('/<int:id>/estimate-price', methods=['POST'])
+@login_required
+def estimate_component_price(id):
+    """Web-search a current street price into est_unit_cost.
+
+    Never touches last_unit_cost (that is what we really paid) and, unless
+    force=true, never overwrites an estimate a human already set.
+    """
+    component = Component.query.get_or_404(id)
+    data = request.get_json() or {}
+    force = bool(data.get('force'))
+
+    if component.est_unit_cost is not None and not force:
+        return {'error': 'This component already has an estimate - pass '
+                         'force=true to replace it'}, 409
+
+    from app.ingest.enrich import estimate_price
+    try:
+        result = estimate_price(component)
+    except Exception as e:
+        current_app.logger.error(f'Price estimate failed for component {id}: {e}')
+        return {'error': f'Price lookup failed: {e}'}, 502
+
+    if result is None:
+        return {'error': 'Could not find a current price for this part - '
+                         'enter one by hand'}, 422
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to save price estimate for {id}: {e}')
+        return {'error': 'Failed to save the estimate'}, 500
+
+    return {'estimate': result, 'component': component.to_dict()}, 200
+
+
+@components_bp.route('/<int:id>/refresh-cost', methods=['POST'])
+@login_required
+def refresh_component_cost_route(id):
+    """Re-derive this component's actual unit cost from its order history"""
+    component = Component.query.get_or_404(id)
+    try:
+        changed = cost_service.refresh_component_cost(component)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Failed to refresh cost for component {id}: {e}')
+        return {'error': 'Failed to refresh cost'}, 500
+    return {'changed': changed, 'component': component.to_dict()}, 200
 
 
 @components_bp.route('/<int:id>/transactions', methods=['GET'])

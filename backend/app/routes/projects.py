@@ -7,7 +7,7 @@ from app.models.component import Component
 from app.models.tag import Tag
 from app.services.file_service import FileService
 from app.services.stock_service import adjust_stock, InsufficientStockError
-from app.routes import paginate_query
+from app.routes import paginate_query, parse_money
 
 projects_bp = Blueprint('projects', __name__)
 
@@ -183,11 +183,18 @@ def add_bom_line(id):
         return {'error': 'qty_planned must be a positive integer'}, 400
 
     try:
+        est_unit_cost = (parse_money(data['est_unit_cost'], 'est_unit_cost')
+                         if 'est_unit_cost' in data else None)
+    except ValueError as e:
+        return {'error': str(e)}, 400
+
+    try:
         line = ProjectComponent(
             project_id=project.id,
             component_id=component.id,
             qty_planned=qty_planned,
             note=(data.get('note') or '').strip() or None,
+            est_unit_cost=est_unit_cost,
         )
         db.session.add(line)
         db.session.commit()
@@ -216,6 +223,14 @@ def update_bom_line(id, line_id):
 
     if 'note' in data:
         line.note = (data.get('note') or '').strip() or None
+
+    # Clearing this (null / '') falls the line back to the component's own
+    # estimate rather than pricing it at zero.
+    if 'est_unit_cost' in data:
+        try:
+            line.est_unit_cost = parse_money(data['est_unit_cost'], 'est_unit_cost')
+        except ValueError as e:
+            return {'error': str(e)}, 400
 
     try:
         db.session.commit()

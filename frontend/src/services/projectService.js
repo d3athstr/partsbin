@@ -33,11 +33,12 @@ const projectService = {
 
   // ==================== BOM ====================
 
-  addBomLine: async (projectId, { component_id, qty_planned, note }) => {
+  addBomLine: async (projectId, { component_id, qty_planned, note, est_unit_cost }) => {
     const response = await api.post(`/projects/${projectId}/bom`, {
       component_id,
       qty_planned,
       note: note || undefined,
+      est_unit_cost: est_unit_cost === undefined ? undefined : est_unit_cost,
     });
     return response.data;
   },

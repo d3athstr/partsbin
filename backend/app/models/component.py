@@ -32,6 +32,19 @@ class Component(db.Model):
     min_qty = db.Column(db.Integer, nullable=False, default=0)  # low-stock threshold
     location = db.Column(db.String(100), nullable=True, index=True)  # bin/drawer label
 
+    # Cost tracking. est_* is what we expect to pay (hand-entered or
+    # web-researched); last_* is what we actually paid, derived from the
+    # newest priced purchase by app.services.cost_service - never typed in.
+    # 4dp so sub-cent parts (resistors at $0.0142/ea) survive the round trip.
+    est_unit_cost = db.Column(db.Numeric(10, 4), nullable=True)
+    est_cost_source = db.Column(db.String(200), nullable=True)  # 'manual' or a URL/vendor
+    est_cost_at = db.Column(db.DateTime, nullable=True)
+
+    last_unit_cost = db.Column(db.Numeric(10, 4), nullable=True)
+    last_cost_at = db.Column(db.Date, nullable=True)  # order date of that purchase
+    last_cost_vendor = db.Column(db.String(30), nullable=True)
+    last_cost_order_id = db.Column(db.Integer, nullable=True)  # link target only, no FK
+
     datasheet_url = db.Column(db.String(500), nullable=True)
     image = db.Column(db.String(500), nullable=True)  # relative path under uploads/
     notes = db.Column(db.Text, nullable=True)
@@ -61,6 +74,37 @@ class Component(db.Model):
             return 'low'
         return 'ok'
 
+    @property
+    def unit_cost(self):
+        """Best known price per unit: what we paid, else what we expect to pay"""
+        return self.last_unit_cost if self.last_unit_cost is not None else self.est_unit_cost
+
+    @property
+    def cost_basis(self):
+        """Where unit_cost came from: actual / estimated / unknown"""
+        if self.last_unit_cost is not None:
+            return 'actual'
+        if self.est_unit_cost is not None:
+            return 'estimated'
+        return 'unknown'
+
+    @property
+    def stock_value(self):
+        """What the parts on the shelf are worth at the best known price"""
+        unit = self.unit_cost
+        if unit is None:
+            return None
+        return float(unit * max(self.qty_on_hand or 0, 0))
+
+    def _cost_fields(self):
+        """Price fields shared by to_summary() and to_dict()"""
+        return {
+            'est_unit_cost': float(self.est_unit_cost) if self.est_unit_cost is not None else None,
+            'last_unit_cost': float(self.last_unit_cost) if self.last_unit_cost is not None else None,
+            'unit_cost': float(self.unit_cost) if self.unit_cost is not None else None,
+            'cost_basis': self.cost_basis,
+        }
+
     def to_summary(self):
         """Compact representation for embedding in other payloads"""
         return {
@@ -75,6 +119,7 @@ class Component(db.Model):
             'image': self.image,
             'image_url': f'/uploads/{self.image}' if self.image else None,
             'stock_status': self.stock_status,
+            **self._cost_fields(),
         }
 
     def to_dict(self):
@@ -95,6 +140,13 @@ class Component(db.Model):
             'image_url': f'/uploads/{self.image}' if self.image else None,
             'notes': self.notes,
             'stock_status': self.stock_status,
+            **self._cost_fields(),
+            'est_cost_source': self.est_cost_source,
+            'est_cost_at': self.est_cost_at.isoformat() if self.est_cost_at else None,
+            'last_cost_at': self.last_cost_at.isoformat() if self.last_cost_at else None,
+            'last_cost_vendor': self.last_cost_vendor,
+            'last_cost_order_id': self.last_cost_order_id,
+            'stock_value': self.stock_value,
             'tags': [t.to_dict() for t in self.tags],
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

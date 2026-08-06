@@ -55,6 +55,33 @@ variant. When variant facts conflict across sources, omit them.
 If you cannot find a confident, directly-linkable asset or verifiable fact,
 use null / omit the spec - never guess or fabricate."""
 
+PRICE_SYSTEM = """You find the current street price of an electronics part for \
+an inventory system's budgeting.
+
+Report the price of ONE unit in USD, as a hobbyist would pay it today from a
+normal retail source (Adafruit, SparkFun, DigiKey, Mouser, LCSC, Seeed,
+Amazon, AliExpress...). Not bulk/reel pricing, not distributor volume breaks,
+unless the part is only ever sold that way.
+
+Respond with ONLY one JSON object, no prose, no markdown fences:
+{"unit_price": number|null, "currency": "USD", "source_url": string|null,
+ "vendor": string|null, "pack_qty": number|null, "note": string|null}
+
+unit_price: price for a SINGLE piece. When the listing you find is a multipack
+(a 10-pack for $8.99), set pack_qty to the pack size and unit_price to the
+per-piece price you derived from it (0.899).
+
+Dev boards and modules ship in look-alike variants (flash/PSRAM codes like
+N16R8 vs N8R2, USB-C vs micro-USB). Price the EXACT variant in the component
+name; if you can only find a different variant, return unit_price null rather
+than a price for the wrong part.
+
+note: one short sentence on what you priced, e.g. "Adafruit single unit" or
+"derived from a 20-pack on AliExpress".
+
+If you cannot find a credible price for this specific part, return unit_price
+null. Never guess or extrapolate a number."""
+
 IMAGE_TYPES = {
     'image/jpeg': 'jpg',
     'image/png': 'png',
@@ -419,3 +446,82 @@ def apply_candidate(component, candidate):
     if any(result.values()):
         db.session.commit()
     return result
+
+
+def estimate_price(component):
+    """Web-search a current unit price and store it as the ESTIMATE.
+
+    Writes est_unit_cost with a source stamp so the number stays identifiable
+    as a machine guess rather than a price someone verified. Never touches
+    last_unit_cost - that is derived from what we really paid.
+
+    Returns the estimate dict, or None when no credible price was found.
+    The caller owns the commit.
+    """
+    from app.services.cost_service import set_estimated_cost
+
+    query = ' '.join(filter(None, (component.manufacturer, component.mpn, component.name)))
+    messages = [{
+        'role': 'user',
+        'content': (
+            f'Component: {query}\n'
+            f'Category: {component.category}\n'
+            f'Specs: {json.dumps(component.specs or {})}\n'
+            f'Description: {component.description or ""}'
+        ),
+    }]
+    client = _client()
+    try:
+        response = client.beta.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            system=PRICE_SYSTEM,
+            tools=[
+                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4},
+                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
+            ],
+            betas=['web-fetch-2025-09-10'],
+            messages=messages,
+        )
+    except Exception:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            system=PRICE_SYSTEM,
+            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 5}],
+            messages=messages,
+        )
+
+    # With server tools the answer is the LAST text block
+    text = ''
+    for block in response.content:
+        if block.type == 'text':
+            text = block.text
+    data = _extract_json(text) or {}
+
+    price = data.get('unit_price')
+    if price is None:
+        return None
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+    # A free part is not a price, and a five-figure hobby component is a
+    # parsing accident (a whole-order total, or the wrong currency).
+    if not 0 < price < 10000:
+        current_app.logger.warning(
+            f'Rejecting implausible price estimate {price} for component {component.id}'
+        )
+        return None
+
+    source = data.get('source_url') or data.get('vendor') or 'web'
+    set_estimated_cost(component, round(price, 4), source=f'claude:{source}')
+
+    return {
+        'unit_price': round(price, 4),
+        'currency': data.get('currency') or 'USD',
+        'source_url': data.get('source_url'),
+        'vendor': data.get('vendor'),
+        'pack_qty': data.get('pack_qty'),
+        'note': data.get('note'),
+    }

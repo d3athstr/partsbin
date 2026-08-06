@@ -27,6 +27,11 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
   const [minQty, setMinQty] = useState(
     initial.min_qty !== undefined ? String(initial.min_qty) : '0'
   );
+  const [estUnitCost, setEstUnitCost] = useState(
+    initial.est_unit_cost !== undefined && initial.est_unit_cost !== null
+      ? String(initial.est_unit_cost)
+      : ''
+  );
   const [location, setLocation] = useState(initial.location || '');
   const [datasheetUrl, setDatasheetUrl] = useState(initial.datasheet_url || '');
   const [notes, setNotes] = useState(initial.notes || '');
@@ -107,6 +112,8 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
       mpn: mpn.trim() || null,
       description: description.trim() || null,
       min_qty: parseInt(minQty, 10) || 0,
+      // Empty clears the estimate; the backend reads '' as "no price", not $0
+      est_unit_cost: estUnitCost.trim() === '' ? null : estUnitCost.trim(),
       location: location.trim() || null,
       datasheet_url: datasheetUrl.trim() || null,
       notes: notes.trim() || null,
@@ -209,6 +216,22 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
               onChange={(e) => setMinQty(e.target.value)}
               className="input"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Estimated unit price</label>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={estUnitCost}
+              onChange={(e) => setEstUnitCost(e.target.value)}
+              className="input"
+              placeholder="e.g. 5.90"
+            />
+            <p className="text-xs text-dark-textMuted mt-1">
+              What you expect to pay per unit. Project costs use this until the part
+              is bought — after that the real price from your orders takes over.
+            </p>
           </div>
           <div className="sm:col-span-2">
             <label className="block text-sm font-medium mb-2">Description</label>

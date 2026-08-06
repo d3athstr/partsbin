@@ -81,6 +81,18 @@ const componentService = {
     return response.data;
   },
 
+  /** Web-search a current street price into est_unit_cost. */
+  estimatePrice: async (id, force = false) => {
+    const response = await api.post(`/components/${id}/estimate-price`, { force });
+    return response.data;
+  },
+
+  /** Re-derive the actual unit cost from this component's order history. */
+  refreshCost: async (id) => {
+    const response = await api.post(`/components/${id}/refresh-cost`);
+    return response.data;
+  },
+
   transactions: async (id) => {
     const response = await api.get(`/components/${id}/transactions`);
     return response.data;

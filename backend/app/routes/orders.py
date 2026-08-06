@@ -5,6 +5,7 @@ from app import db
 from app.models.order import Order, OrderItem, ORDER_VENDORS, ORDER_STATUSES
 from app.models.component import Component
 from app.services.stock_service import adjust_stock, receive_order_items
+from app.services import cost_service
 from app.routes import paginate_query
 
 orders_bp = Blueprint('orders', __name__)
@@ -230,6 +231,9 @@ def update_order(id):
         order.order_date = _parse_order_date(data['order_date'])
 
     try:
+        # Both status and order_date decide whether (and how recently) this
+        # order counts as the newest purchase of its components.
+        cost_service.refresh_costs_for_order(order)
         db.session.commit()
         return order.to_dict(include_items=True), 200
     except Exception as e:
@@ -257,6 +261,9 @@ def update_order_item(id, item_id):
         InsufficientStockError, receive_single_item, reverse_item_stock,
     )
     order_received = item.order.status == 'received'
+    # A re-match strands the component we're matching away FROM: its actual
+    # cost may have come from this very item.
+    prev_component_id = item.component_id
 
     try:
         if 'component_id' in data:
@@ -298,6 +305,9 @@ def update_order_item(id, item_id):
                          'Adjust the component stock first.'}, 409
 
     try:
+        cost_service.refresh_costs_for_order(
+            item.order, extra_component_ids=(prev_component_id,),
+        )
         db.session.commit()
         return item.to_dict(), 200
     except Exception as e:
@@ -341,6 +351,9 @@ def create_component_from_item(id, item_id):
         if item.order.status == 'received':
             from app.services.stock_service import receive_single_item
             receive_single_item(item, user_id=current_user.id)
+
+        # The new component inherits this line's price as its actual cost
+        cost_service.refresh_component_cost(component)
 
         db.session.commit()
         return {'component': component.to_dict(), 'item': item.to_dict()}, 201
@@ -519,6 +532,9 @@ def auto_create_components(id):
             if units > 1 and not item.qty_is_units:
                 item.qty = (item.qty or 1) * units
             item.qty_is_units = True
+            # Keep the pack size: unit_price is per PACK, so per-piece cost is
+            # unrecoverable once the pack size is folded into qty.
+            item.units_per_item = max(int(units or 1), 1)
 
         # Importing an order means putting its parts in inventory: when every
         # item resolved, receive the order right here (same audited path as
@@ -535,6 +551,10 @@ def auto_create_components(id):
                 order.status = 'received'
                 order.received_at = datetime.utcnow()
                 received = True
+
+        # Newly created/linked components take their actual cost from this
+        # order's line prices.
+        cost_service.refresh_costs_for_order(order)
 
         db.session.commit()
     except Exception as e:
@@ -581,6 +601,7 @@ def receive_order(id):
 
         order.status = 'received'
         order.received_at = datetime.utcnow()
+        cost_service.refresh_costs_for_order(order)
         db.session.commit()
 
         data = order.to_dict(include_items=True)

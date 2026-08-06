@@ -1,4 +1,5 @@
 from datetime import datetime
+from sqlalchemy.orm import joinedload
 from app import db
 
 PROJECT_STATUSES = ('planning', 'active', 'built', 'on_hold', 'retired')
@@ -41,7 +42,14 @@ class Project(db.Model):
         }
 
     def to_dict(self, include_detail=False):
-        """Convert project to dictionary"""
+        """Convert project to dictionary (always costed)"""
+        from app.services.cost_service import project_cost_summary
+
+        # Eager-load components: every BOM line reads its component's price,
+        # so the list view would otherwise fire a query per line per project.
+        lines = self.bom.options(joinedload(ProjectComponent.component)).all()
+        line_dicts = [line.to_dict() for line in lines]
+
         data = {
             'id': self.id,
             'name': self.name,
@@ -49,14 +57,15 @@ class Project(db.Model):
             'description': self.description,
             'repo_url': self.repo_url,
             'tags': [t.to_dict() for t in self.tags],
-            'bom_count': self.bom.count(),
+            'bom_count': len(lines),
             'file_count': self.files.count(),
+            'cost': project_cost_summary(line_dicts),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
         if include_detail:
             data['readme_md'] = self.readme_md
-            data['bom'] = [line.to_dict() for line in self.bom]
+            data['bom'] = line_dicts
             data['files'] = [f.to_dict() for f in self.files]
         return data
 
@@ -74,6 +83,9 @@ class ProjectComponent(db.Model):
     qty_planned = db.Column(db.Integer, nullable=False, default=1)
     qty_used = db.Column(db.Integer, nullable=False, default=0)
     note = db.Column(db.String(300), nullable=True)
+    # Per-project estimate override: bulk pricing for one build should not
+    # rewrite the catalog estimate every other project reads.
+    est_unit_cost = db.Column(db.Numeric(10, 4), nullable=True)
 
     # Relationships
     component = db.relationship('Component', backref=db.backref('project_links', lazy='dynamic'))
@@ -82,7 +94,9 @@ class ProjectComponent(db.Model):
         return f'<ProjectComponent project {self.project_id} component {self.component_id}>'
 
     def to_dict(self):
-        """Convert BOM line to dictionary with availability info"""
+        """Convert BOM line to dictionary with availability and cost info"""
+        from app.services.cost_service import line_costs
+
         available = self.component.qty_on_hand if self.component else 0
         remaining = max((self.qty_planned or 0) - (self.qty_used or 0), 0)
         return {
@@ -94,6 +108,7 @@ class ProjectComponent(db.Model):
             'note': self.note,
             'available': available,
             'short': available < remaining,
+            **line_costs(self),
         }
 
 

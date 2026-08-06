@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 import projectService from '../services/projectService';
 import { errMsg } from '../services/api';
 import ComponentPicker from '../components/common/ComponentPicker';
-import { fmtDate } from '../utils/format';
+import { fmtDate, fmtMoney, fmtUnitMoney, fmtVariance } from '../utils/format';
 
 const FILE_KINDS = ['image', 'pdf', 'schematic', 'firmware', 'other'];
 const PROJECT_STATUSES = ['planning', 'active', 'built', 'on_hold', 'retired'];
@@ -33,6 +33,91 @@ const AvailabilityText = ({ line }) => {
   );
 };
 
+/**
+ * Line cost: the number to budget with. Real money reads plain; an estimate
+ * is flagged so a total is never mistaken for money actually spent.
+ */
+const LineCost = ({ line }) => {
+  if (line.projected_line_cost == null) {
+    return <span className="text-dark-textMuted">—</span>;
+  }
+  const estimated = line.cost_basis === 'estimated';
+  return (
+    <span className="tabular-nums whitespace-nowrap">
+      {fmtMoney(line.projected_line_cost)}
+      {estimated && <span className="text-xs text-dark-textMuted"> est</span>}
+    </span>
+  );
+};
+
+/**
+ * Project cost summary. Three totals because they answer three questions:
+ * what we thought it would cost, what the bought parts really cost, and what
+ * to budget overall (actual where known, estimate elsewhere).
+ */
+const CostCard = ({ cost }) => {
+  if (!cost || !cost.line_count) return null;
+
+  const unpriced = cost.lines_unpriced || 0;
+  const variance = cost.comparable_line_count > 0 ? cost.variance : null;
+
+  return (
+    <div className="card">
+      <h2 className="text-lg font-semibold mb-4">Cost</h2>
+      <div className="grid sm:grid-cols-3 gap-4">
+        <div>
+          <p className="text-xs text-dark-textMuted uppercase tracking-wide">Estimated</p>
+          <p className="text-2xl tabular-nums">{fmtMoney(cost.estimated_total)}</p>
+          <p className="text-xs text-dark-textMuted mt-0.5">
+            {cost.lines_with_estimate} of {cost.line_count} lines
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-dark-textMuted uppercase tracking-wide">Actual</p>
+          <p className="text-2xl tabular-nums">{fmtMoney(cost.actual_total)}</p>
+          <p className="text-xs text-dark-textMuted mt-0.5">
+            {cost.lines_with_actual} of {cost.line_count} lines purchased
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-dark-textMuted uppercase tracking-wide">Projected</p>
+          <p className="text-2xl tabular-nums font-semibold">
+            {fmtMoney(cost.projected_total)}
+          </p>
+          <p className="text-xs text-dark-textMuted mt-0.5">
+            actual where known, else estimate
+          </p>
+        </div>
+      </div>
+
+      {(variance !== null || unpriced > 0) && (
+        <div className="mt-4 pt-3 border-t border-dark-border text-xs text-dark-textMuted space-y-1">
+          {variance !== null && (
+            <p>
+              Across the {cost.comparable_line_count} line
+              {cost.comparable_line_count === 1 ? '' : 's'} priced both ways, actual came
+              in{' '}
+              <span
+                className={`tabular-nums ${variance > 0 ? 'text-dark-warning' : ''}`}
+              >
+                {fmtVariance(variance)}
+              </span>{' '}
+              vs estimate ({fmtMoney(cost.comparable_actual_total)} vs{' '}
+              {fmtMoney(cost.comparable_estimated_total)}).
+            </p>
+          )}
+          {unpriced > 0 && (
+            <p className="text-dark-warning">
+              {unpriced} line{unpriced === 1 ? ' has' : 's have'} no price at all — totals
+              understate the real cost.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ProjectDetailPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -43,6 +128,8 @@ const ProjectDetailPage = () => {
   const [pickQty, setPickQty] = useState('1');
   const [consumingLine, setConsumingLine] = useState(null);
   const [consumeQty, setConsumeQty] = useState('1');
+  const [pricingLine, setPricingLine] = useState(null);
+  const [priceInput, setPriceInput] = useState('');
   const [uploadKind, setUploadKind] = useState('image');
   const fileInputRef = useRef(null);
 
@@ -75,6 +162,18 @@ const ProjectDetailPage = () => {
     mutationFn: (lineId) => projectService.deleteBomLine(id, lineId),
     onSuccess: () => invalidate(),
     onError: (err) => setActionError(errMsg(err, 'Failed to remove BOM line')),
+  });
+
+  const priceMutation = useMutation({
+    mutationFn: ({ lineId, value }) =>
+      projectService.updateBomLine(id, lineId, { est_unit_cost: value }),
+    onSuccess: () => {
+      invalidate();
+      setPricingLine(null);
+      setPriceInput('');
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Failed to set line price')),
   });
 
   const consumeMutation = useMutation({
@@ -207,6 +306,8 @@ const ProjectDetailPage = () => {
 
       {actionError && <div className="alert-error">{actionError}</div>}
 
+      <CostCard cost={project.cost || data?.cost} />
+
       {/* BOM */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
@@ -225,8 +326,21 @@ const ProjectDetailPage = () => {
                 <tr className="border-b border-dark-border text-dark-textMuted">
                   <th className="text-left py-2 pr-3 font-medium">Component</th>
                   <th className="text-right py-2 pr-3 font-medium">Planned</th>
-                  <th className="text-right py-2 pr-3 font-medium">Used</th>
+                  <th className="text-right py-2 pr-3 font-medium hidden md:table-cell">Used</th>
                   <th className="text-right py-2 pr-3 font-medium">Available</th>
+                  <th
+                    className="text-right py-2 pr-3 font-medium"
+                    title="Estimated price per unit — click to override it for this project"
+                  >
+                    Est/ea
+                  </th>
+                  <th
+                    className="text-right py-2 pr-3 font-medium"
+                    title="What you last actually paid per unit"
+                  >
+                    Act/ea
+                  </th>
+                  <th className="text-right py-2 pr-3 font-medium">Line</th>
                   <th className="py-2"></th>
                 </tr>
               </thead>
@@ -245,9 +359,84 @@ const ProjectDetailPage = () => {
                         )}
                       </td>
                       <td className="py-2.5 pr-3 text-right tabular-nums">{line.qty_planned}</td>
-                      <td className="py-2.5 pr-3 text-right tabular-nums">{line.qty_used ?? 0}</td>
+                      <td className="py-2.5 pr-3 text-right tabular-nums hidden md:table-cell">
+                        {line.qty_used ?? 0}
+                      </td>
                       <td className="py-2.5 pr-3 text-right">
                         <AvailabilityText line={line} />
+                      </td>
+                      <td className="py-2.5 pr-3 text-right">
+                        {pricingLine === lineId ? (
+                          <span className="inline-flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.0001"
+                              value={priceInput}
+                              onChange={(e) => setPriceInput(e.target.value)}
+                              placeholder="per unit"
+                              className="input w-24 py-1 text-sm"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() =>
+                                priceMutation.mutate({
+                                  lineId,
+                                  // Empty clears the override and falls the line
+                                  // back to the component's own estimate
+                                  value: priceInput.trim() === '' ? null : priceInput.trim(),
+                                })
+                              }
+                              disabled={priceMutation.isPending}
+                              className="btn-primary text-xs px-2 py-1"
+                            >
+                              OK
+                            </button>
+                            <button
+                              onClick={() => setPricingLine(null)}
+                              className="btn-secondary text-xs px-2 py-1"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setPricingLine(lineId);
+                              setPriceInput(
+                                line.est_unit_cost_override != null
+                                  ? String(line.est_unit_cost_override)
+                                  : ''
+                              );
+                            }}
+                            className="tabular-nums whitespace-nowrap hover:text-dark-accent"
+                            title={
+                              line.est_unit_cost_override != null
+                                ? 'Overridden for this project — click to change or clear'
+                                : "From the component's estimate — click to override here"
+                            }
+                          >
+                            {fmtUnitMoney(line.est_unit_cost)}
+                            {line.est_unit_cost_override != null && (
+                              <span className="text-xs text-dark-textMuted"> *</span>
+                            )}
+                          </button>
+                        )}
+                      </td>
+                      <td
+                        className="py-2.5 pr-3 text-right tabular-nums whitespace-nowrap"
+                        title={
+                          line.actual_cost_at
+                            ? `Last paid ${fmtDate(line.actual_cost_at)}${
+                                line.actual_cost_vendor ? ` · ${line.actual_cost_vendor}` : ''
+                              }`
+                            : 'Not purchased yet'
+                        }
+                      >
+                        {fmtUnitMoney(line.actual_unit_cost)}
+                      </td>
+                      <td className="py-2.5 pr-3 text-right">
+                        <LineCost line={line} />
                       </td>
                       <td className="py-2.5 text-right whitespace-nowrap">
                         {consumingLine === lineId ? (
@@ -312,6 +501,11 @@ const ProjectDetailPage = () => {
                 })}
               </tbody>
             </table>
+            {bom.some((l) => l.est_unit_cost_override != null) && (
+              <p className="text-xs text-dark-textMuted mt-2">
+                * estimate overridden for this project
+              </p>
+            )}
           </div>
         )}
 

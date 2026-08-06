@@ -3,6 +3,7 @@
 from .seed import init_app as init_seed
 from .ingest_cli import init_app as init_ingest
 from .enrich_cli import init_app as init_enrich
+from .cost_cli import init_app as init_cost
 
 
 def init_app(app):
@@ -10,3 +11,4 @@ def init_app(app):
     init_seed(app)
     init_ingest(app)
     init_enrich(app)
+    init_cost(app)

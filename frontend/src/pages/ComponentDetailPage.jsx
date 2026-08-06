@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import componentService from '../services/componentService';
 import { errMsg } from '../services/api';
 import QtyText from '../components/common/QtyText';
-import { fmtDate, fmtDateTime, fmtMoney } from '../utils/format';
+import { fmtDate, fmtDateTime, fmtMoney, fmtUnitMoney } from '../utils/format';
 import { vendorOrderUrl } from '../utils/vendors';
 import StatusChip from '../components/common/StatusChip';
 
@@ -40,6 +40,7 @@ const ComponentDetailPage = () => {
   const transactions = data?.transactions || component.transactions || [];
   const usedIn = data?.used_in || component.used_in || [];
   const orders = data?.orders || component.orders || [];
+  const cost = data?.cost || component.cost || {};
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['component', id] });
@@ -76,6 +77,24 @@ const ComponentDetailPage = () => {
     }
     adjustMutation.mutate({ d, n: note });
   };
+
+  const estimatePriceMutation = useMutation({
+    mutationFn: (force) => componentService.estimatePrice(id, force),
+    onSuccess: (res) => {
+      invalidate();
+      setActionError('');
+      const est = res?.estimate || {};
+      setEnrichNote(
+        `Estimated ${fmtUnitMoney(est.unit_price)} per unit` +
+          (est.note ? ` — ${est.note}` : '') +
+          '. This is a web guess; edit it if you know better.'
+      );
+    },
+    onError: (err) => {
+      setEnrichNote('');
+      setActionError(errMsg(err, 'Price lookup failed'));
+    },
+  });
 
   const enrichMutation = useMutation({
     mutationFn: () => componentService.enrich(id),
@@ -348,6 +367,96 @@ const ComponentDetailPage = () => {
                 {adjustMutation.isPending ? 'Adjusting...' : 'Adjust Stock'}
               </button>
             </form>
+          </div>
+
+          {/* Cost */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">Cost</h2>
+              <button
+                onClick={() => estimatePriceMutation.mutate(cost.est_unit_cost != null)}
+                disabled={estimatePriceMutation.isPending}
+                className="text-xs px-2 py-1 rounded bg-dark-elevated border border-dark-border text-dark-textMuted hover:text-dark-text hover:border-dark-accent"
+                title="Web-search a current street price into the estimate"
+              >
+                {estimatePriceMutation.isPending
+                  ? 'Searching...'
+                  : cost.est_unit_cost != null
+                    ? 'Re-estimate'
+                    : 'Estimate price'}
+              </button>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-dark-textMuted">Last paid</span>
+                  <span className="tabular-nums font-semibold">
+                    {fmtUnitMoney(cost.last_unit_cost)}
+                  </span>
+                </div>
+                <p className="text-xs text-dark-textMuted">
+                  {cost.last_unit_cost != null ? (
+                    <>
+                      {cost.last_cost_vendor && (
+                        <span className="capitalize">{cost.last_cost_vendor}</span>
+                      )}
+                      {cost.last_cost_at && <> · {fmtDate(cost.last_cost_at)}</>}
+                      {cost.last_cost_order_id && (
+                        <>
+                          {' · '}
+                          <Link to={`/orders/${cost.last_cost_order_id}`} className="link">
+                            order
+                          </Link>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    'Never purchased at a known price'
+                  )}
+                </p>
+              </div>
+
+              <div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-dark-textMuted">Estimated</span>
+                  <span className="tabular-nums">{fmtUnitMoney(cost.est_unit_cost)}</span>
+                </div>
+                <p className="text-xs text-dark-textMuted">
+                  {cost.est_unit_cost != null
+                    ? cost.est_cost_source?.startsWith('claude:')
+                      ? `Web estimate · ${fmtDate(cost.est_cost_at)}`
+                      : `Set by hand · ${fmtDate(cost.est_cost_at)}`
+                    : 'No estimate set'}
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-dark-border flex items-baseline justify-between gap-2">
+                <span className="text-dark-textMuted">
+                  Stock value
+                  {cost.cost_basis === 'estimated' && (
+                    <span className="text-xs"> (est.)</span>
+                  )}
+                </span>
+                <span className="tabular-nums">{fmtMoney(cost.stock_value)}</span>
+              </div>
+            </div>
+
+            {(cost.history || []).length > 1 && (
+              <div className="mt-3 pt-3 border-t border-dark-border">
+                <p className="text-xs text-dark-textMuted mb-1">Price history</p>
+                <ul className="text-xs space-y-0.5">
+                  {cost.history.map((h, i) => (
+                    <li key={i} className="flex justify-between gap-2 tabular-nums">
+                      <span className="text-dark-textMuted">
+                        {fmtDate(h.order_date)} · <span className="capitalize">{h.vendor}</span>
+                      </span>
+                      <span>{fmtUnitMoney(h.unit_price)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Used in projects */}

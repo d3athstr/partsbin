@@ -88,7 +88,14 @@ class OrderItem(db.Model):
     order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False, index=True)
     raw_title = db.Column(db.Text, nullable=False)  # as parsed from the email
     qty = db.Column(db.Integer, nullable=False, default=1)
+    # Price of ONE ordered line-item as the vendor billed it. A line-item can
+    # be a pack ("XIAO ESP32C6 3PCS Pack" = $22.99 for three), so this is NOT
+    # the price of one physical piece - divide by units_per_item for that.
     unit_price = db.Column(db.Numeric(10, 2), nullable=True)
+    # Physical pieces in one ordered line-item (pack size). qty is multiplied
+    # by this at auto-create, so without it the per-piece price is
+    # unrecoverable once qty_is_units is set.
+    units_per_item = db.Column(db.Integer, nullable=False, default=1, server_default='1')
 
     match_status = db.Column(db.String(20), nullable=False, default='unmatched')  # one of MATCH_STATUSES
     # True when qty already counts physical units (pack size folded in at parse
@@ -112,6 +119,14 @@ class OrderItem(db.Model):
     def __repr__(self):
         return f'<OrderItem {self.raw_title[:40]!r}>'
 
+    @property
+    def piece_price(self):
+        """What ONE physical piece cost, unpacking multipack line pricing"""
+        if self.unit_price is None:
+            return None
+        pack = max(int(self.units_per_item or 1), 1)
+        return self.unit_price / pack
+
     def to_dict(self):
         """Convert order item to dictionary"""
         return {
@@ -120,6 +135,8 @@ class OrderItem(db.Model):
             'raw_title': self.raw_title,
             'qty': self.qty,
             'unit_price': float(self.unit_price) if self.unit_price is not None else None,
+            'units_per_item': self.units_per_item or 1,
+            'piece_price': float(self.piece_price) if self.piece_price is not None else None,
             'match_status': self.match_status,
             'is_kit': self.is_kit,
             'parent_item_id': self.parent_item_id,

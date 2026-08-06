@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import projectService from '../services/projectService';
 import Pagination from '../components/common/Pagination';
-import { fmtDate } from '../utils/format';
+import { fmtDate, fmtMoney } from '../utils/format';
 
 const PER_PAGE = 24;
 const STATUSES = ['planning', 'active', 'on_hold', 'done'];
@@ -101,6 +101,19 @@ const ProjectsPage = () => {
               </div>
               {p.description && (
                 <p className="text-sm text-dark-textMuted line-clamp-3 mb-3">{p.description}</p>
+              )}
+              {p.cost?.projected_total > 0 && (
+                <p className="text-sm mb-1 tabular-nums">
+                  {fmtMoney(p.cost.projected_total)}
+                  <span className="text-xs text-dark-textMuted">
+                    {' '}
+                    {p.cost.lines_with_actual === p.cost.line_count
+                      ? 'spent'
+                      : p.cost.lines_with_actual > 0
+                        ? `projected · ${p.cost.lines_with_actual}/${p.cost.line_count} lines bought`
+                        : 'estimated'}
+                  </span>
+                </p>
               )}
               <p className="text-xs text-dark-textMuted">
                 {p.updated_at ? `Updated ${fmtDate(p.updated_at)}` : p.created_at ? `Created ${fmtDate(p.created_at)}` : ''}
