@@ -11,19 +11,20 @@ import re
 MODEL = os.getenv('PARTSBIN_CLAUDE_MODEL', 'claude-sonnet-5')
 MAX_BODY_CHARS = 24000
 
-VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed')
+VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
 SYSTEM_PROMPT = """You are a strict parser for vendor order emails feeding an \
 electronics inventory system. You receive one email (subject, sender, body) \
-from Amazon, AliExpress, Adafruit, Mouser, DigiKey or Seeed Studio.
+from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio or Rokland.
 
 Respond with ONLY a single JSON object - no prose, no explanation, no markdown \
 fences. The schema is:
 
 {
   "is_order": boolean,          // true only for order confirmation / shipment / delivery notices
-  "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed" | "other",
+  "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
+          | "rokland" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
@@ -35,7 +36,8 @@ fences. The schema is:
   ],
   "tracking": string | null,    // tracking number if present
   "carrier": string | null,     // carrier name if present (UPS, USPS, FedEx, ...)
-  "eta": string | null          // estimated delivery date, ISO-8601 if determinable
+  "eta": string | null,         // estimated delivery date, ISO-8601 if determinable
+  "total": number | null        // ORDER grand total, numeric only, no currency
 }
 
 Rules:
@@ -45,6 +47,16 @@ Rules:
 - "Your package has shipped / is on the way" -> event "shipped".
 - "Delivered / your package arrived" -> event "delivered".
 - qty defaults to 1 when not stated. Keep item titles as written, trimmed.
+- total: the order's grand/order total ("Grand Total", "Order Total"), as a
+  bare number. NOT a per-item price, NOT a shipment subtotal when the email
+  covers only part of the order. null when not stated.
+- NEVER invent an item. Amazon increasingly redacts confirmations down to
+  "Ordered: 5 Electronics items" with product images but no titles, prices or
+  ASINs anywhere in the email. When the email states an item COUNT but names
+  nothing, return items=[] - do not emit placeholder rows like
+  {"title": "Electronics item"}. A placeholder is worse than an empty order:
+  it becomes a junk line in the review queue and can fuzzy-match a real
+  component. is_order stays true so the order itself is still recorded.
 - units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
   1 when unclear. Do NOT multiply it into qty - report them separately.
 - is_component: true for anything that belongs in an electronics/maker
@@ -136,7 +148,19 @@ def _normalize(parsed):
 
     order_no = parsed.get('order_no')
 
+    # Grand total. Kept even when items is empty - a redacted Amazon
+    # confirmation ("Ordered: 5 Electronics items") carries no titles at all,
+    # so the total is the only substance the order has.
+    try:
+        total = parsed.get('total')
+        total = round(float(total), 2) if total is not None else None
+        if total is not None and total <= 0:
+            total = None
+    except (ValueError, TypeError):
+        total = None
+
     return {
+        'total': total,
         'is_order': bool(parsed.get('is_order')),
         'vendor': vendor,
         'order_no': str(order_no).strip() if order_no else None,
@@ -202,7 +226,7 @@ def parse_order_email(subject, sender, body):
 
 COMPONENT_SYSTEM_PROMPT = """You turn raw vendor order-item titles into clean \
 component definitions for an electronics inventory. You receive a numbered list \
-of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed orders) and a \
+of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland orders) and a \
 list of allowed categories.
 
 Respond with ONLY a single JSON object - no prose, no markdown fences:

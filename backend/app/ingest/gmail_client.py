@@ -18,11 +18,17 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # $INGEST_FORWARD_ADDRESS: Don's Outlook address auto-forwards his Adafruit
 # order mail into Gmail; forwards carry HIS address in From, not adafruit.com.
 # Non-order mail forwarded from there is discarded by the Claude parser.
-# seeed.cc: Seeed Studio's transactional mail domain (the storefront is
-# seeedstudio.com, but order/shipping notices send from seeed.cc). Added
-# 2026-08-09 on Don's request, ahead of the first Seeed order — if a Seeed
-# confirmation ever arrives from seeedstudio.com instead, add that domain here
-# too; nothing else in the pipeline is domain-specific.
+# rokland.com: Rokland (LoRa/Meshtastic antennas, RAKwireless gear). VERIFIED
+# 2026-08-09 against order #119503 — they send from sales@rokland.com straight
+# to Don's Gmail, so this term does the work on its own.
+# seeed.cc: Seeed Studio, and a CAVEAT worth reading before trusting it.
+# Seeed sends from no-reply@notify.seeed.cc (subdomain — from:seeed.cc still
+# matches) but addresses it to Don's OUTLOOK account, not his Gmail. Order
+# #4000565798 reached ingestion only because Don forwarded it by hand, i.e. via
+# the $INGEST_FORWARD_ADDRESS term below, >24h after Seeed sent it. So this
+# term is correct but INERT for Don: it fires only if Seeed ever mails Gmail
+# directly. Real Seeed coverage needs his Outlook auto-forward rule widened
+# past Adafruit, or his Seeed account switched to the Gmail address.
 # in:anywhere -in:spam: order mail deleted from the inbox before the next
 # 30-min ingest run is otherwise invisible (Gmail search skips Trash by
 # default) and never gets an order row — happened to Amazon order
@@ -31,7 +37,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # spoofed-From phishing there would otherwise reach the parser.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
-    'OR seeed.cc OR $INGEST_FORWARD_ADDRESS) '
+    'OR seeed.cc OR rokland.com OR $INGEST_FORWARD_ADDRESS) '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )

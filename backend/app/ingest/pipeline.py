@@ -64,6 +64,7 @@ def _upsert_order(account, message, parsed):
             raw_subject=(message.get('subject') or '')[:300],
             tracking_no=parsed.get('tracking'),
             carrier=parsed.get('carrier'),
+            total=parsed.get('total'),
         )
         db.session.add(order)
         db.session.flush()
@@ -131,6 +132,10 @@ def _upsert_order(account, message, parsed):
             order.tracking_no = parsed['tracking']
         if parsed.get('carrier'):
             order.carrier = parsed['carrier']
+        # Fill a missing total from a later email, but never overwrite one:
+        # a "shipped" mail for a split shipment quotes only that package.
+        if order.total is None and parsed.get('total') is not None:
+            order.total = parsed['total']
         message_ids = list(order.gmail_message_ids or [])
         if message['id'] not in message_ids:
             message_ids.append(message['id'])

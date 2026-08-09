@@ -18,7 +18,7 @@ from app.ingest.claude_parser import MODEL, _client, _extract_json
 
 KIT_SYSTEM = """You determine the exact contents of an electronics assortment \
 kit for an inventory system. You receive the raw order-item title of a kit \
-(from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed) and a list of allowed \
+(from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland) and a list of allowed \
 inventory categories.
 
 Use web search to find the EXACT product listing, then extract the per-part
