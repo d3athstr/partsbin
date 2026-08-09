@@ -30,7 +30,7 @@ Sister app to Garment Gallery (GarmentGallery2) — same architecture, auth, and
   markdown documentation), repo_url, tags, files (images / PDFs / schematics / firmware),
   BOM = ProjectComponent(component, qty_planned, qty_used, note). "Consume" action decrements
   stock via transactions. Availability check flags BOM lines short on stock.
-- **Order**: vendor (amazon/aliexpress/adafruit/mouser/digikey/other), vendor_order_no, status
+- **Order**: vendor (amazon/aliexpress/adafruit/mouser/digikey/seeed/other), vendor_order_no, status
   (ordered → shipped → delivered → received), order_date, tracking_no/carrier/url, gmail_account,
   gmail_message_ids, raw_subject, total.
 - **OrderItem**: raw_title (as parsed from email), qty, unit_price, match_status (unmatched /
@@ -49,8 +49,11 @@ RF Modules (WiFi/BLE/LoRa), Audio, Mechanical, Tools, Other.
 
 1. `partsbin-ingest.timer` → `flask ingest run` every 30 min.
 2. For each authorized Gmail account (don, deanna): Gmail API query
-   `from:(amazon.com OR aliexpress.com OR adafruit.com OR mouser.com OR digikey.com) newer_than:14d`,
-   skip message-ids already in ProcessedMessage.
+   `from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com OR seeed.cc OR
+   $INGEST_FORWARD_ADDRESS) in:anywhere -in:spam -from:pharmacy.amazon.com
+   -subject:"Amazon Pharmacy" newer_than:14d`, skip message-ids already in ProcessedMessage.
+   (`aliexpress` is bare because duck.com rewrites the From; Don's Outlook address forwards
+   Adafruit mail; `in:anywhere` catches order mail trashed before the next run.)
 3. Each new message → Claude API (claude-sonnet-5) extracts JSON:
    `{is_order, vendor, order_no, event: ordered|shipped|delivered, items:[{title, qty, unit_price}], tracking, carrier, eta}`.
    Non-order mail marked processed and skipped.

@@ -18,6 +18,11 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # $INGEST_FORWARD_ADDRESS: Don's Outlook address auto-forwards his Adafruit
 # order mail into Gmail; forwards carry HIS address in From, not adafruit.com.
 # Non-order mail forwarded from there is discarded by the Claude parser.
+# seeed.cc: Seeed Studio's transactional mail domain (the storefront is
+# seeedstudio.com, but order/shipping notices send from seeed.cc). Added
+# 2026-08-09 on Don's request, ahead of the first Seeed order — if a Seeed
+# confirmation ever arrives from seeedstudio.com instead, add that domain here
+# too; nothing else in the pipeline is domain-specific.
 # in:anywhere -in:spam: order mail deleted from the inbox before the next
 # 30-min ingest run is otherwise invisible (Gmail search skips Trash by
 # default) and never gets an order row — happened to Amazon order
@@ -26,7 +31,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # spoofed-From phishing there would otherwise reach the parser.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
-    'OR $INGEST_FORWARD_ADDRESS) '
+    'OR seeed.cc OR $INGEST_FORWARD_ADDRESS) '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )

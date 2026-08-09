@@ -5,8 +5,8 @@ Live at **https://parts.example.com** · sister app to GarmentGallery2 (same arc
 
 Track stock of resistors, capacitors, LEDs, dev boards, sensors, LiPo batteries, servos, etc.;
 document ESP32-and-friends projects (markdown + files + BOM tied to inventory); and auto-import
-part orders by polling Don's & DeAnna's Gmail for Amazon / AliExpress / Adafruit / Mouser / Digikey
-order emails, parsed with the Claude API into a human-confirmed review queue.
+part orders by polling Don's & DeAnna's Gmail for Amazon / AliExpress / Adafruit / Mouser / Digikey /
+Seeed Studio order emails, parsed with the Claude API into a human-confirmed review queue.
 
 ## Layout
 
