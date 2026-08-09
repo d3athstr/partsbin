@@ -373,15 +373,31 @@ def auto_create_components(id):
     qty 0 and link it. Stock still only moves on /receive.
     """
     order = _visible_order_or_404(id)
+    from app.ingest.claude_parser import infer_components
+    from app.ingest.matcher import suggest_component, is_placeholder_title
+    from app.models.category import Category
+
     pending = [it for it in order.items
                if it.match_status in ('unmatched', 'suggested')]
+
+    # Redacted vendor titles ("Hardware item") name a department, not a part.
+    # Asking Claude to define a component from one produces a confident
+    # invention, which then fuzzy-matches real inventory and gets marked
+    # confirmed without review - that is exactly how a phantom Schottky diode
+    # reached stock on 2026-07-22. Never infer from them; surface them instead
+    # so the item detail gets recovered from the vendor's order page.
+    blocked = [it for it in pending if is_placeholder_title(it.raw_title)]
+    pending = [it for it in pending if not is_placeholder_title(it.raw_title)]
+    blocked_out = [{'item_id': it.id, 'title': it.raw_title,
+                    'reason': 'redacted placeholder title - no part information to infer from'}
+                   for it in blocked]
+    if blocked_out:
+        current_app.logger.warning(
+            f'auto-create: skipped {len(blocked_out)} placeholder-title item(s) on order {id}')
+
     if not pending:
         return {'message': 'No pending items on this order',
-                'created': [], 'linked': [], 'failed': []}, 200
-
-    from app.ingest.claude_parser import infer_components
-    from app.ingest.matcher import suggest_component
-    from app.models.category import Category
+                'created': [], 'linked': [], 'failed': blocked_out}, 200
 
     categories = [c.name for c in Category.query.order_by(Category.id).all()]
     valid_categories = set(categories)
@@ -392,7 +408,8 @@ def auto_create_components(id):
         current_app.logger.error(f'Component inference failed: {e}')
         return {'error': f'Claude inference failed: {e}'}, 502
 
-    created, linked, failed, exploded = [], [], [], []
+    created, linked, exploded = [], [], []
+    failed = list(blocked_out)
     known_components = Component.query.all()
 
     # Assortment kits explode into per-part child items instead of landing in

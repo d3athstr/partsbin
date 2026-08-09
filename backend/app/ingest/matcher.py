@@ -7,6 +7,36 @@ from rapidfuzz import fuzz, process, utils
 # that must never cross-match - a different code means a different part.
 VARIANT_CODE = re.compile(r'\bN\d+R\d+\b', re.IGNORECASE)
 
+# Amazon redacts order confirmations to "Ordered: 5 Electronics items", and the
+# parser used to emit one line per category as a placeholder title: "Hardware
+# item", "Pet item", "Electronics item". These name a DEPARTMENT, not a part.
+#
+# They are poison to every downstream step. On 2026-07-22 "Hardware item" was
+# run through auto-create, where Claude inferred a plausible-sounding component
+# definition out of nothing and the result fuzzy-matched component 210
+# (SS34 / 1N5822 Schottky Diode) at the 82 SUGGEST bar - which auto-create then
+# marks 'confirmed' with no human ever seeing it. The order auto-received two
+# days later and put a phantom unit into stock at $6.56, roughly 10x what a 3A
+# Schottky costs.
+#
+# Matching the whole string (not a substring) keeps real parts safe: a genuine
+# title carries a manufacturer, a value, a package or a part number somewhere,
+# so it cannot be only category words followed by "item".
+# The leading \d* matters: Amazon phrases these with a count ("2 Electronics
+# items"), and without it the guard leaks on exactly the multi-item orders that
+# carry the least information.
+PLACEHOLDER_TITLE = re.compile(r'^\d*\s*[a-z&,\sà-ÿ]+ items?$', re.IGNORECASE)
+
+
+def is_placeholder_title(title):
+    """True for a redacted category-noun title that identifies no actual part.
+
+    Deliberately narrow. A broad "looks too generic" heuristic would reject
+    legitimately terse inventory names like "Wire Mesh Screen", so this only
+    catches the specific shape a redacted vendor email produces.
+    """
+    return bool(PLACEHOLDER_TITLE.match((title or '').strip()))
+
 
 def _variant_conflict(title, name):
     """True when title and name both carry variant codes but share none"""
@@ -40,6 +70,11 @@ def _candidate_strings(component):
 def best_match(title, components=None):
     """Best (component_id, score) for a title, or (None, 0). No threshold."""
     if not title:
+        return None, 0
+    # A department name can never identify a part. Refusing here covers every
+    # caller at once - ingest auto-confirm, suggestions, and the auto-create
+    # dedupe lookup that caused the phantom stock movement.
+    if is_placeholder_title(title):
         return None, 0
     if components is None:
         components = Component.query.all()
