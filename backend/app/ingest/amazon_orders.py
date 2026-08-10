@@ -171,15 +171,38 @@ def needs_detail(order):
     return all(is_placeholder_title(it.raw_title) for it in items)
 
 
-def candidate_orders(limit=None, order_no=None, account=None):
-    """Amazon orders whose item detail is missing or redacted, oldest first."""
+def candidate_orders(limit=None, order_no=None, account=None, since=None,
+                     include_ignored=False):
+    """Amazon orders whose item detail is missing or redacted, oldest first.
+
+    Returns (orders, skipped) so a caller can report what it declined to fetch
+    rather than looking like it covered everything.
+
+    'ignored' orders are skipped by default: those were auto-discarded because
+    every item was non-inventory ("Pet item", "Apparel item"), and re-fetching
+    ~89 of them costs a page load and a Claude call each to re-learn that dog
+    food is not a component. The category noun is the one true thing a redacted
+    title carries, so that judgement is sound - but a mixed-category order
+    ("Arts & Crafts and Office items") could in principle hide a real part,
+    which is why --include-ignored exists.
+    """
     q = Order.query.filter(Order.vendor == 'amazon')
     if order_no:
         q = q.filter(Order.vendor_order_no == order_no)
     if account:
         q = q.filter(Order.gmail_account == account)
+    if since:
+        q = q.filter(Order.order_date >= since)
     orders = [o for o in q.order_by(Order.order_date.asc()).all() if needs_detail(o)]
-    return orders[:limit] if limit else orders
+
+    skipped = []
+    if not include_ignored and not order_no:
+        skipped = [o for o in orders if o.status == 'ignored']
+        orders = [o for o in orders if o.status != 'ignored']
+    capped = orders[:limit] if limit else orders
+    if limit and len(orders) > limit:
+        skipped += orders[limit:]
+    return capped, skipped
 
 
 def _drop_placeholder_items(order):
@@ -228,11 +251,20 @@ def import_order_details(order, rows):
             'placeholders_kept_with_stock': kept}
 
 
-def backfill(limit=None, order_no=None, account=None, dry_run=False, log=print):
+def backfill(limit=None, order_no=None, account=None, since=None,
+             include_ignored=False, dry_run=False, log=print):
     """Fetch and import item detail for every order missing it."""
     from playwright.sync_api import sync_playwright
 
-    orders = candidate_orders(limit=limit, order_no=order_no, account=account)
+    orders, skipped = candidate_orders(limit=limit, order_no=order_no,
+                                       account=account, since=since,
+                                       include_ignored=include_ignored)
+    if skipped:
+        # Never let a bounded run read as full coverage.
+        log(f'skipping {len(skipped)} order(s): '
+            f'{len([o for o in skipped if o.status == "ignored"])} auto-ignored as '
+            f'non-inventory (--include-ignored to fetch them), '
+            f'{len([o for o in skipped if o.status != "ignored"])} beyond --limit')
     if not orders:
         log('nothing to do: no Amazon orders missing item detail')
         return []
@@ -256,8 +288,17 @@ def backfill(limit=None, order_no=None, account=None, dry_run=False, log=print):
                                     'status': f'fetch failed: {e}'})
                     continue
                 if not rows:
-                    log(f'  {order.vendor_order_no}: no items on page (cancelled or digital?)')
-                    results.append({'order': order.vendor_order_no, 'status': 'empty page'})
+                    # The page renders (title "Order Details", ~7.5KB, no error
+                    # text) but carries no items at all. Seen on 6 of the first
+                    # 9 backfilled orders, every one of them a non-electronics
+                    # category - Apparel, Pet, Beauty, Arts & Crafts, Drugstore.
+                    # Most likely an Amazon Household profile thing: the
+                    # confirmation mail reaches the shared inbox, but the order
+                    # detail is only visible to the profile that placed it.
+                    # Report it; never invent items to fill the gap.
+                    log(f'  {order.vendor_order_no}: page has no items '
+                        f'(likely another Household profile, or archived)')
+                    results.append({'order': order.vendor_order_no, 'status': 'no items on page'})
                     continue
                 if dry_run:
                     log(f'  {order.vendor_order_no}: would import {len(rows)} item(s)')
