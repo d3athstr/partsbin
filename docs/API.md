@@ -35,7 +35,10 @@ POST /api/projects {name, status, description, readme_md, repo_url, tags[]}
 PUT /api/projects/<id> ; DELETE /api/projects/<id>
 POST /api/projects/<id>/bom {component_id, qty_planned, note} ; PUT/DELETE /api/projects/<id>/bom/<line_id>
 POST /api/projects/<id>/bom/<line_id>/consume {qty}       # decrements stock (project_use txn)
-POST /api/projects/<id>/files (multipart, kind=image|pdf|schematic|firmware|other)
+POST /api/projects/<id>/files (multipart, kind=image|pdf|schematic|firmware|model3d|other)
+  # kind=model3d: validated by EXTENSION (.stl .3mf .obj .step .stp .scad .gcode .bgcode .f3d),
+  # cap 64MB (MAX_MODEL_SIZE) vs 50MB for other kinds. Meshes all sniff as octet-stream /
+  # text-plain / zip, so MIME cannot distinguish them. STL/3MF/OBJ preview in the browser.
 DELETE /api/projects/<id>/files/<file_id> ; GET /uploads/projects/<file>
 
 ## Orders / review queue
