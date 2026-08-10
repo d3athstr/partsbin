@@ -4,6 +4,7 @@ Usage:
     flask ingest run             # one polling + parsing pass (30-min timer)
     flask ingest status          # per-account token/poll status
     flask ingest token-monitor   # keep-alive refresh + dead-grant emails (6h timer)
+    flask ingest amazon-details  # recover items Amazon redacts out of its email
 """
 import json
 
@@ -23,6 +24,30 @@ def ingest_run(account):
     accounts = [account] if account else None
     summary = run_ingest(accounts=accounts)
     click.echo(json.dumps(summary, indent=2))
+
+
+@ingest_cli.command('amazon-details')
+@click.option('--limit', default=None, type=int, help='Max orders to process this run')
+@click.option('--order', 'order_no', default=None, help='Just this vendor order number')
+@click.option('--account', default=None, help='Only orders for one gmail account')
+@click.option('--dry-run', is_flag=True, help='Show what would be imported, write nothing')
+@with_appcontext
+def amazon_details_command(limit, order_no, account, dry_run):
+    """Recover item detail Amazon redacts out of its order emails.
+
+    Since ~2026-07-15 Amazon confirmations name no items ("Ordered: 5
+    Electronics items"), so orders ingest as a correct shell - number, date,
+    total - with nothing on them. This fetches each such order's details page
+    using the stored browser session and fills the items in.
+
+    Needs a live session: scripts/amazon_session.py check
+    """
+    from app.ingest.amazon_orders import backfill
+
+    results = backfill(limit=limit, order_no=order_no, account=account,
+                       dry_run=dry_run, log=click.echo)
+    imported = sum(r.get('created', 0) for r in results)
+    click.echo(f'\n{len(results)} order(s) processed, {imported} item(s) imported')
 
 
 @ingest_cli.command('status')

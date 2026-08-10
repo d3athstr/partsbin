@@ -27,6 +27,77 @@ def _message_date(message):
         return None
 
 
+def create_order_items(order, item_dicts, event='ordered', account=None):
+    """Turn parsed item dicts into OrderItems, matching each against inventory.
+
+    Shared by email ingestion and the Amazon order-page importer so that pack
+    sizes, kit handling, the is_component junk filter and the auto-confirm bar
+    behave identically no matter where the item detail came from. Duplicating
+    this for the importer would mean two sets of rules governing stock.
+
+    Returns the number of items created.
+    """
+    components = Component.query.all()
+    created = 0
+    for item_data in item_dicts:
+        # Amazon combines multiple orders into one box, and the "Shipped"
+        # email lists every item in the shipment - including items whose
+        # own order we already recorded. When a non-"ordered" email is
+        # creating this order, skip items that already exist on another
+        # recent order (the "Ordered" email is the authoritative source).
+        if event != 'ordered':
+            ref = order.order_date or date.today()
+            dup = (OrderItem.query.join(Order, OrderItem.order_id == Order.id)
+                   .filter(Order.gmail_account == account,
+                           Order.id != order.id,
+                           Order.order_date.between(
+                               ref - timedelta(days=45), ref + timedelta(days=45)),
+                           OrderItem.raw_title == item_data['title'])
+                   .first())
+            if dup:
+                continue
+        units = max(int(item_data.get('units_per_item') or 1), 1)
+        item = OrderItem(
+            order_id=order.id,
+            raw_title=item_data['title'],
+            qty=item_data['qty'] * units,
+            qty_is_units=True,
+            unit_price=item_data.get('unit_price'),
+            # Persist the pack size, don't just multiply it into qty. unit_price
+            # is the price of ONE LINE ITEM, which is usually a pack: "XIAO
+            # ESP32C6 3PCS Pack" is $22.99 for three. Leaving this at the
+            # default 1 makes OrderItem.piece_price report the whole pack price
+            # per piece - $22.99 instead of $7.66 - and that feeds component
+            # last_unit_cost. Ingest never stored it before; only the
+            # auto-create route did, so any pack bought straight off an email
+            # priced high by its pack size.
+            units_per_item=units,
+            is_kit=bool(item_data.get('is_kit')),
+        )
+        created += 1
+        if not item_data.get('is_component', True):
+            # Dog treats et al: never part of inventory, never reviewed
+            item.match_status = 'ignored'
+            db.session.add(item)
+            continue
+        if item.is_kit:
+            # Assortment kits never auto-confirm (a lump-sum "525 pcs"
+            # stock line is useless) - they wait in the review queue,
+            # where auto-create explodes them into per-part child items.
+            db.session.add(item)
+            continue
+        match_id, score = best_match(item_data['title'], components=components)
+        if match_id and score >= AUTO_CONFIRM_THRESHOLD:
+            # Strong match to an existing component: no human needed
+            item.component_id = match_id
+            item.match_status = 'confirmed'
+        elif match_id and score >= MATCH_THRESHOLD:
+            item.suggested_component_id = match_id
+            item.match_status = 'suggested'
+        db.session.add(item)
+    return created
+
+
 def _upsert_order(account, message, parsed):
     """Create or update an Order from a parsed order email. Returns the Order."""
     vendor = parsed['vendor']
@@ -69,53 +140,7 @@ def _upsert_order(account, message, parsed):
         db.session.add(order)
         db.session.flush()
 
-        components = Component.query.all()
-        for item_data in parsed['items']:
-            # Amazon combines multiple orders into one box, and the "Shipped"
-            # email lists every item in the shipment - including items whose
-            # own order we already recorded. When a non-"ordered" email is
-            # creating this order, skip items that already exist on another
-            # recent order (the "Ordered" email is the authoritative source).
-            if event != 'ordered':
-                ref = order.order_date or date.today()
-                dup = (OrderItem.query.join(Order, OrderItem.order_id == Order.id)
-                       .filter(Order.gmail_account == account,
-                               Order.id != order.id,
-                               Order.order_date.between(
-                                   ref - timedelta(days=45), ref + timedelta(days=45)),
-                               OrderItem.raw_title == item_data['title'])
-                       .first())
-                if dup:
-                    continue
-            units = item_data.get('units_per_item', 1)
-            item = OrderItem(
-                order_id=order.id,
-                raw_title=item_data['title'],
-                qty=item_data['qty'] * units,
-                qty_is_units=True,
-                unit_price=item_data.get('unit_price'),
-                is_kit=bool(item_data.get('is_kit')),
-            )
-            if not item_data.get('is_component', True):
-                # Dog treats et al: never part of inventory, never reviewed
-                item.match_status = 'ignored'
-                db.session.add(item)
-                continue
-            if item.is_kit:
-                # Assortment kits never auto-confirm (a lump-sum "525 pcs"
-                # stock line is useless) - they wait in the review queue,
-                # where auto-create explodes them into per-part child items.
-                db.session.add(item)
-                continue
-            match_id, score = best_match(item_data['title'], components=components)
-            if match_id and score >= AUTO_CONFIRM_THRESHOLD:
-                # Strong match to an existing component: no human needed
-                item.component_id = match_id
-                item.match_status = 'confirmed'
-            elif match_id and score >= MATCH_THRESHOLD:
-                item.suggested_component_id = match_id
-                item.match_status = 'suggested'
-            db.session.add(item)
+        create_order_items(order, parsed['items'], event=event, account=account)
 
         # An order with nothing inventory-relevant on it disappears entirely
         if parsed['items'] and all(
