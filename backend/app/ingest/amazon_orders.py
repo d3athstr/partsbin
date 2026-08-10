@@ -256,6 +256,19 @@ def backfill(limit=None, order_no=None, account=None, since=None,
     """Fetch and import item detail for every order missing it."""
     from playwright.sync_api import sync_playwright
 
+    # Orders are per-user and so are Amazon accounts. Without this, a run using
+    # Don's session happily fetches DeAnna's order numbers and gets a page that
+    # renders perfectly with no items on it - which looks exactly like an
+    # archived order. 32 orders were "recovered" as empty that way before the
+    # cause (gmail_account) was checked.
+    if account is None:
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from amazon_session import session_account
+        account = session_account()
+        log(f'session belongs to account {account!r}; only its orders will be fetched '
+            f'(--account to override)')
+
     orders, skipped = candidate_orders(limit=limit, order_no=order_no,
                                        account=account, since=since,
                                        include_ignored=include_ignored)
@@ -289,15 +302,17 @@ def backfill(limit=None, order_no=None, account=None, since=None,
                     continue
                 if not rows:
                     # The page renders (title "Order Details", ~7.5KB, no error
-                    # text) but carries no items at all. Seen on 6 of the first
-                    # 9 backfilled orders, every one of them a non-electronics
-                    # category - Apparel, Pet, Beauty, Arts & Crafts, Drugstore.
-                    # Most likely an Amazon Household profile thing: the
-                    # confirmation mail reaches the shared inbox, but the order
-                    # detail is only visible to the profile that placed it.
-                    # Report it; never invent items to fill the gap.
+                    # text) but carries no items. The overwhelmingly common
+                    # cause was fetching another PartsBin user's order with
+                    # this session - Amazon serves that empty shell rather than
+                    # a "not your order" error, and Amazon's own order search
+                    # cannot find the number either. Account scoping above now
+                    # prevents that, so reaching here means a same-account
+                    # order really has no visible detail: cancelled, archived,
+                    # or a digital/gift-card order. Report it; never invent
+                    # items to fill the gap.
                     log(f'  {order.vendor_order_no}: page has no items '
-                        f'(likely another Household profile, or archived)')
+                        f'(cancelled, archived, or digital)')
                     results.append({'order': order.vendor_order_no, 'status': 'no items on page'})
                     continue
                 if dry_run:

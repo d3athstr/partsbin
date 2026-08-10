@@ -58,6 +58,32 @@ UA = ('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
 
 
 RUN_DIR = '/run/partsbin'
+ACCOUNT_MARKER = '.partsbin-account'
+
+
+def session_account(profile_dir=None):
+    """Which PartsBin gmail_account this stored Amazon session belongs to.
+
+    Orders are per-user, and so are Amazon accounts. Fetching DeAnna's order
+    numbers with Don's session returns a page that renders perfectly and
+    contains no items - indistinguishable from an archived order unless you
+    check who owns the order first. Recording the owner here lets the importer
+    refuse to cross accounts instead of burning requests to learn nothing.
+    """
+    path = os.path.join(profile_dir or PROFILE_DIR, ACCOUNT_MARKER)
+    try:
+        with open(path) as fh:
+            name = fh.read().strip()
+            if name:
+                return name
+    except OSError:
+        pass
+    return os.getenv('AMAZON_SESSION_ACCOUNT', 'don')
+
+
+def _write_account_marker(account):
+    with open(os.path.join(PROFILE_DIR, ACCOUNT_MARKER), 'w') as fh:
+        fh.write(account.strip() + '\n')
 
 
 def _ensure_profile_dir():
@@ -254,7 +280,9 @@ def cmd_login(args):
                     continue
 
             if signed:
-                print('\n[ok] signed in — session saved to', PROFILE_DIR)
+                _write_account_marker(args.account)
+                print(f'\n[ok] signed in — session saved to {PROFILE_DIR} '
+                      f'for account {args.account!r}')
             else:
                 print('\n[FAIL] still signed out when the window expired.')
             ctx.close()
@@ -275,6 +303,7 @@ def cmd_check(args):
             time.sleep(2)
             ok = _is_signed_in(page)
             print(('[ok] session live' if ok else '[FAIL] signed out — re-run login'),
+                  f'| account: {session_account()}',
                   '| final url:', page.url[:110])
             return 0 if ok else 1
         finally:
@@ -300,6 +329,10 @@ def main():
                    help='VNC password (default: generated, easy to hand-type)')
     p.add_argument('--email', default=os.getenv('AMAZON_LOGIN_EMAIL'),
                    help='pre-fill the Amazon sign-in email field')
+    p.add_argument('--account', default=os.getenv('AMAZON_SESSION_ACCOUNT', 'don'),
+                   help="PartsBin gmail_account this Amazon login belongs to "
+                        "(don|deanna). Recorded so the importer never fetches "
+                        "one person's orders with the other's session.")
     p.set_defaults(func=cmd_login)
     sub.add_parser('check', help='headless: is the session still valid?').set_defaults(func=cmd_check)
     sub.add_parser('logout', help='destroy the stored profile').set_defaults(func=cmd_logout)
