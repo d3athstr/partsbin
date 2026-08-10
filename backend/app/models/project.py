@@ -3,7 +3,7 @@ from sqlalchemy.orm import joinedload
 from app import db
 
 PROJECT_STATUSES = ('planning', 'active', 'built', 'on_hold', 'retired')
-PROJECT_FILE_KINDS = ('image', 'pdf', 'schematic', 'firmware', 'other')
+PROJECT_FILE_KINDS = ('image', 'pdf', 'schematic', 'firmware', 'model3d', 'other')
 
 
 class Project(db.Model):
@@ -113,7 +113,7 @@ class ProjectComponent(db.Model):
 
 
 class ProjectFile(db.Model):
-    """File attached to a project (image / pdf / schematic / firmware / other)"""
+    """File attached to a project (image / pdf / schematic / firmware / model3d / other)"""
     __tablename__ = 'project_file'
 
     id = db.Column(db.Integer, primary_key=True)

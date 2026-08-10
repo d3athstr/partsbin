@@ -295,7 +295,7 @@ def consume_bom_line(id, line_id):
 @projects_bp.route('/<int:id>/files', methods=['POST'])
 @login_required
 def upload_project_file(id):
-    """Upload a project file (multipart, kind=image|pdf|schematic|firmware|other)"""
+    """Upload a project file (multipart, kind=image|pdf|schematic|firmware|model3d|other)"""
     project = Project.query.get_or_404(id)
 
     file = request.files.get('file')

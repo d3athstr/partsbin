@@ -29,8 +29,16 @@ class Config:
     MAX_IMAGE_SIZE = int(os.getenv('MAX_IMAGE_SIZE', 5 * 1024 * 1024))  # 5MB
     MAX_PDF_SIZE = int(os.getenv('MAX_PDF_SIZE', 25 * 1024 * 1024))  # 25MB
     MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 50 * 1024 * 1024))  # 50MB (project files)
+    MAX_MODEL_SIZE = int(os.getenv('MAX_MODEL_SIZE', 64 * 1024 * 1024))  # 64MB (3D print models)
     ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
     ALLOWED_PDF_TYPES = {'application/pdf'}
+    # 3D models are validated by EXTENSION, not magic bytes: every mesh format
+    # sniffs as application/octet-stream (binary STL), text/plain (ASCII STL,
+    # OBJ, STEP, gcode) or application/zip (3MF), so a MIME whitelist would
+    # either reject everything or wave through any binary blob.
+    ALLOWED_MODEL_EXTENSIONS = {
+        '.stl', '.3mf', '.obj', '.step', '.stp', '.scad', '.gcode', '.bgcode', '.f3d',
+    }
 
     # TOTP configuration
     TOTP_ISSUER_NAME = os.getenv('TOTP_ISSUER_NAME', 'PartsBin')

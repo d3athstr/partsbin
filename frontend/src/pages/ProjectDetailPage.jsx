@@ -6,8 +6,10 @@ import remarkGfm from 'remark-gfm';
 import projectService from '../services/projectService';
 import { errMsg } from '../services/api';
 import ComponentPicker from '../components/common/ComponentPicker';
+import ProjectModels from '../components/projects/ProjectModels';
 import { fmtDate, fmtMoney, fmtUnitMoney, fmtVariance } from '../utils/format';
 
+// model3d is uploaded from its own section, not this dropdown
 const FILE_KINDS = ['image', 'pdf', 'schematic', 'firmware', 'other'];
 const PROJECT_STATUSES = ['planning', 'active', 'built', 'on_hold', 'retired'];
 
@@ -250,8 +252,10 @@ const ProjectDetailPage = () => {
     return <div className="alert-error">Failed to load project: {error.message}</div>;
   }
 
+  // 3D models live in their own section, so they are held out of both lists
+  const modelFiles = files.filter((f) => f.kind === 'model3d');
   const imageFiles = files.filter((f) => f.kind === 'image');
-  const otherFiles = files.filter((f) => f.kind !== 'image');
+  const otherFiles = files.filter((f) => f.kind !== 'image' && f.kind !== 'model3d');
 
   return (
     <div className="space-y-6">
@@ -542,6 +546,19 @@ const ProjectDetailPage = () => {
         )}
       </div>
 
+      {/* 3D models — printed parts for this build */}
+      <ProjectModels
+        models={modelFiles}
+        fileUrl={fileUrl}
+        uploading={uploadMutation.isPending}
+        onUpload={(file) => uploadMutation.mutate({ file, kind: 'model3d' })}
+        onDelete={(fileId) => {
+          if (window.confirm('Delete this 3D model?')) {
+            deleteFileMutation.mutate(fileId);
+          }
+        }}
+      />
+
       {/* Files */}
       <div className="card">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -571,7 +588,7 @@ const ProjectDetailPage = () => {
           </div>
         </div>
 
-        {files.length === 0 ? (
+        {imageFiles.length === 0 && otherFiles.length === 0 ? (
           <p className="text-sm text-dark-textMuted">No files uploaded.</p>
         ) : (
           <div className="space-y-4">

@@ -7,6 +7,21 @@ from flask import current_app
 from app import db
 from app.models.project import ProjectFile
 
+# Content types for the 3D formats we accept. Mostly informational: the
+# viewer picks its loader from the extension, but a stored MIME beats
+# "application/octet-stream" for every mesh in the API payload.
+MODEL_MIME_TYPES = {
+    '.stl': 'model/stl',
+    '.3mf': 'model/3mf',
+    '.obj': 'model/obj',
+    '.step': 'model/step',
+    '.stp': 'model/step',
+    '.scad': 'text/x-scad',
+    '.gcode': 'text/x.gcode',
+    '.bgcode': 'application/x.bgcode',
+    '.f3d': 'application/x-fusion360',
+}
+
 
 class FileService:
     """Service for handling file uploads and storage.
@@ -104,7 +119,7 @@ class FileService:
         Args:
             project_id: Project ID
             file: FileStorage object
-            kind: image | pdf | schematic | firmware | other
+            kind: image | pdf | schematic | firmware | model3d | other
 
         Returns:
             ProjectFile: created database record
@@ -116,6 +131,17 @@ class FileService:
         elif kind == 'pdf':
             allowed = current_app.config['ALLOWED_PDF_TYPES']
             max_size = current_app.config['MAX_PDF_SIZE']
+        elif kind == 'model3d':
+            # Extension check instead of MIME (see ALLOWED_MODEL_EXTENSIONS)
+            ext = FileService.model_extension(file.filename)
+            allowed_ext = current_app.config['ALLOWED_MODEL_EXTENSIONS']
+            if ext not in allowed_ext:
+                raise ValueError(
+                    f'Not a supported 3D model file ({ext or "no extension"}). '
+                    f'Allowed: {", ".join(sorted(allowed_ext))}'
+                )
+            allowed = None
+            max_size = current_app.config['MAX_MODEL_SIZE']
         else:
             allowed = None
             max_size = current_app.config['MAX_FILE_SIZE']
@@ -123,6 +149,13 @@ class FileService:
         is_valid, error, mime_type = FileService.validate_file(file, allowed, max_size)
         if not is_valid:
             raise ValueError(error)
+
+        if kind == 'model3d':
+            # magic sniffs meshes as octet-stream/text-plain; record the real
+            # format so a download and the viewer both know what they have.
+            mime_type = MODEL_MIME_TYPES.get(
+                FileService.model_extension(file.filename), mime_type
+            )
 
         upload_dir = os.path.join(
             current_app.config['UPLOAD_FOLDER'], 'projects', str(project_id)
@@ -176,6 +209,11 @@ class FileService:
         )
         if os.path.exists(project_dir):
             shutil.rmtree(project_dir)
+
+    @staticmethod
+    def model_extension(filename):
+        """Lowercase extension of a filename ('' when it has none)"""
+        return os.path.splitext(filename or '')[1].lower()
 
     @staticmethod
     def get_file_path(relative_path):
