@@ -47,6 +47,7 @@ fences. The schema is:
   "order_no": string | null,    // the vendor's order number, verbatim
   "payment_derived": boolean,   // true only for a PAYMENT receipt (PayPal), not a seller email
   "order_no_source": "merchant" | "paypal" | null,   // where order_no came from
+  "order_date": string | null,  // ISO-8601 date the order was PLACED (see rules)
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
     {"title": string, "qty": integer, "unit_price": number | null,
@@ -68,10 +69,22 @@ Rules:
   the real vendor is only visible in the forwarded body, subject or an
   "Original Message" block - read those before deciding. Getting this wrong
   files the order under "other", where it is invisible to the vendor filter.
+- order_date: the date the purchase was actually made. For a FORWARDED email
+  this is the date on the ORIGINAL message ("Sent: August 9, 2026 5:33 PM" in
+  the forwarded header), NOT the date it was forwarded, which may be days
+  later. null if the email states no date.
 - PAYMENT receipts (PayPal "You sent a payment", "Receipt for your payment")
   are NOT the seller's own order email. Handle them like this:
-  * vendor = the MERCHANT who was paid, read from the merchant/recipient name
-    ("Seeed Development Limited" -> "seeed"), never "paypal".
+  * vendor = the MERCHANT who was paid, read from the merchant/recipient name,
+    never "paypal".
+  * A merchant is usually named by its LEGAL ENTITY, not its brand, and that
+    name is often not in English. All of the following are vendor "seeed":
+    "Seeed Development Limited", "Shenzhen Seeed Technology Co., Ltd",
+    "深圳矽递科技股份有限公司" (Shenzhen Seeed Technology), and payment
+    addresses such as payment@seeedstudio.com or service@seeed.cc - including
+    when PayPal truncates them ("payment@seeedstudio....").
+    Translate or transliterate a non-Latin merchant name before deciding, and
+    treat the payment address as authoritative when the name is unclear.
   * Set payment_derived=true. This marks the order as reconstructed from a
     payment rather than from the seller, where line items are usually absent.
   * order_no: prefer the MERCHANT's own invoice/order number if the receipt
@@ -219,8 +232,17 @@ def _normalize(parsed):
     except (ValueError, TypeError):
         total = None
 
+    order_date = parsed.get('order_date')
+    if order_date:
+        # Trust only a plain ISO date; anything else falls back to the
+        # message's own Date header in the pipeline.
+        order_date = str(order_date).strip()[:10]
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', order_date):
+            order_date = None
+
     return {
         'total': total,
+        'order_date': order_date,
         'payment_derived': payment_derived,
         'order_no_source': (str(parsed.get('order_no_source')).lower()
                             if parsed.get('order_no_source') in ('merchant', 'paypal')

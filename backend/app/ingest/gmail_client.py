@@ -21,6 +21,11 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # rokland.com: Rokland (LoRa/Meshtastic antennas, RAKwireless gear). VERIFIED
 # 2026-08-09 against order #119503 — they send from sales@rokland.com straight
 # to Don's Gmail, so this term does the work on its own.
+# seeedstudio.com: Seeed's OTHER domain, added 2026-08-11 after Don noticed
+# seeed.cc mail arriving and seeedstudio.com mail not. from:seeed.cc matches
+# its subdomains (notify.seeed.cc) but NOT a separate domain, so anything sent
+# from seeedstudio.com - including the payment@seeedstudio.com address PayPal
+# shows as the merchant - was invisible to the query.
 # seeed.cc: Seeed Studio, and a CAVEAT worth reading before trusting it.
 # Seeed sends from no-reply@notify.seeed.cc (subdomain — from:seeed.cc still
 # matches) but addresses it to Don's OUTLOOK account, not his Gmail. Order
@@ -54,7 +59,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # Seeed ended up inert. Widen the rule or forward by hand.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
-    'OR seeed.cc OR rokland.com OR jlcpcb.com OR pololu.com '
+    'OR seeed.cc OR seeedstudio.com OR rokland.com OR jlcpcb.com OR pololu.com '
     'OR paypal.com OR $INGEST_FORWARD_ADDRESS) '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail

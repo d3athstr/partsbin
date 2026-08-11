@@ -27,6 +27,25 @@ def _message_date(message):
         return None
 
 
+def _order_date(message, parsed):
+    """When the purchase was actually made.
+
+    A forwarded email carries the FORWARD's Date header, which can be days
+    after the purchase - Don forwards Seeed's PayPal receipts in batches. The
+    parser reads the original "Sent:" line out of the forwarded header, so
+    prefer that. It matters beyond tidiness: last_unit_cost is derived from the
+    NEWEST confirm-matched order item, so a wrong date can make an older price
+    win.
+    """
+    stated = parsed.get('order_date')
+    if stated:
+        try:
+            return date.fromisoformat(stated)
+        except (ValueError, TypeError):
+            pass
+    return _message_date(message)
+
+
 def create_order_items(order, item_dicts, event='ordered', account=None):
     """Turn parsed item dicts into OrderItems, matching each against inventory.
 
@@ -157,7 +176,7 @@ def _upsert_order(account, message, parsed):
 
     # Reconcile the two sides of one purchase before creating anything.
     if order is None:
-        msg_date = _message_date(message) or date.today()
+        msg_date = _order_date(message, parsed) or date.today()
         twin = _payment_twin(vendor, account, parsed.get('total'), msg_date,
                              want_payment_derived=not payment_derived)
         if twin is not None:
@@ -200,7 +219,7 @@ def _upsert_order(account, message, parsed):
             vendor=vendor,
             vendor_order_no=order_no,
             status=event,
-            order_date=_message_date(message) or date.today(),
+            order_date=_order_date(message, parsed) or date.today(),
             gmail_account=account,
             gmail_message_ids=[message['id']],
             raw_subject=(message.get('subject') or '')[:300],
@@ -247,7 +266,7 @@ def _upsert_order(account, message, parsed):
             order.gmail_message_ids = message_ids
         # If this email predates the recorded date (e.g. the "ordered" email
         # arrived after a "shipped" one created the order), keep the earliest
-        md = _message_date(message)
+        md = _order_date(message, parsed)
         if md and (order.order_date is None or md < order.order_date):
             order.order_date = md
 
