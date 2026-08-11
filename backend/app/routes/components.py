@@ -49,7 +49,8 @@ def _validate_category(name):
 def _set_fields(component, data):
     """Apply updatable fields from a request payload"""
     for field in ('name', 'category', 'manufacturer', 'mpn', 'description',
-                  'location', 'datasheet_url', 'notes'):
+                  'location', 'datasheet_url', 'notes',
+                  'product_url', 'product_vendor', 'product_sku'):
         if field in data:
             value = data[field]
             setattr(component, field, value.strip() if isinstance(value, str) else value)

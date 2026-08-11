@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import componentService from '../../services/componentService';
 import { asList, errMsg } from '../../services/api';
+import { VENDORS } from '../../utils/vendors';
 
 const nameOf = (x) => (typeof x === 'string' ? x : x?.name);
 
@@ -34,6 +35,9 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
   );
   const [location, setLocation] = useState(initial.location || '');
   const [datasheetUrl, setDatasheetUrl] = useState(initial.datasheet_url || '');
+  const [productUrl, setProductUrl] = useState(initial.product_url || '');
+  const [productVendor, setProductVendor] = useState(initial.product_vendor || '');
+  const [productSku, setProductSku] = useState(initial.product_sku || '');
   const [notes, setNotes] = useState(initial.notes || '');
   const [specRows, setSpecRows] = useState(() => {
     const entries = Object.entries(initial.specs || {});
@@ -116,6 +120,9 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
       est_unit_cost: estUnitCost.trim() === '' ? null : estUnitCost.trim(),
       location: location.trim() || null,
       datasheet_url: datasheetUrl.trim() || null,
+      product_url: productUrl.trim() || null,
+      product_vendor: productVendor.trim() || null,
+      product_sku: productSku.trim() || null,
       notes: notes.trim() || null,
       tags: selectedTags,
     };
@@ -251,6 +258,45 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
               className="input"
               placeholder="https://..."
             />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium mb-2">Where to buy (vendor product page)</label>
+            <input
+              type="url"
+              value={productUrl}
+              onChange={(e) => setProductUrl(e.target.value)}
+              className="input"
+              placeholder="https://www.adafruit.com/product/258"
+            />
+            <div className="grid grid-cols-2 gap-4 mt-2">
+              <div>
+                <label className="block text-xs text-dark-textMuted mb-1">Vendor</label>
+                <select
+                  value={productVendor}
+                  onChange={(e) => setProductVendor(e.target.value)}
+                  className="input"
+                >
+                  <option value="">—</option>
+                  {VENDORS.map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-dark-textMuted mb-1">Vendor SKU</label>
+                <input
+                  type="text"
+                  value={productSku}
+                  onChange={(e) => setProductSku(e.target.value)}
+                  className="input"
+                  placeholder="e.g. 258"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-dark-textMuted mt-1">
+              The precise part on the vendor's site — becomes a "Buy" link on the
+              component and in every BOM that uses it.
+            </p>
           </div>
         </div>
       </div>

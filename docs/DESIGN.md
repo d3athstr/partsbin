@@ -22,6 +22,8 @@ Sister app to Garment Gallery (GarmentGallery2) — same architecture, auth, and
 - **Component**: name, category (from fixed list below), specs JSONB (free-form key/value:
   resistance, capacitance, voltage, package, pinout…), manufacturer, mpn, description,
   qty_on_hand, min_qty (low-stock threshold), location (bin/drawer label), datasheet_url,
+  product_url / product_vendor / product_sku (canonical "buy it here" vendor reference —
+  surfaced as a Buy link on the component and, via to_summary(), in every BOM line),
   image upload, tags (m2m), notes.
 - **StockTransaction**: component_id, delta, reason (initial | order_received | project_use |
   adjustment), ref order_item/project, note, user, timestamp. `qty_on_hand` only changes via

@@ -35,9 +35,18 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # 111-9687910-0033853 on 2026-07-14, trashed within 18 min of arrival.
 # Trash retains 30 days, well past the 14d lookback. Spam stays excluded:
 # spoofed-From phishing there would otherwise reach the parser.
+# pololu.com: Pololu (Robotics & Electronics — regulators, motor drivers; the
+# S9V11F3S5 converter on the Sentinel carrier). Account registered 2026-08-11
+# and account mail (accounts@pololu.com) DOES reach Gmail directly, which is
+# why this term is here. But Don says his ORDER mail will arrive as an Outlook
+# FORWARD, so in practice it is the $INGEST_FORWARD_ADDRESS term below that
+# carries it — and that only works if his Outlook auto-forward rule actually
+# includes Pololu. It currently covers Adafruit only, which is exactly how
+# Seeed ended up inert. Widen the rule or forward by hand.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
-    'OR seeed.cc OR rokland.com OR jlcpcb.com OR $INGEST_FORWARD_ADDRESS) '
+    'OR seeed.cc OR rokland.com OR jlcpcb.com OR pololu.com '
+    'OR $INGEST_FORWARD_ADDRESS) '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )

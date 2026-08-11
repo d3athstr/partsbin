@@ -5,7 +5,7 @@ import componentService from '../services/componentService';
 import { errMsg } from '../services/api';
 import QtyText from '../components/common/QtyText';
 import { fmtDate, fmtDateTime, fmtMoney, fmtUnitMoney } from '../utils/format';
-import { vendorOrderUrl } from '../utils/vendors';
+import { vendorOrderUrl, productRefLabel } from '../utils/vendors';
 import StatusChip from '../components/common/StatusChip';
 
 const nameOf = (x) => (typeof x === 'string' ? x : x?.name);
@@ -521,19 +521,40 @@ const ComponentDetailPage = () => {
               ))}
             </div>
 
-            {component.datasheet_url && (
-              <a
-                href={component.datasheet_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="link inline-flex items-center gap-1 text-sm mt-4"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Datasheet
-              </a>
-            )}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-4">
+              {component.datasheet_url && (
+                <a
+                  href={component.datasheet_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="link inline-flex items-center gap-1 text-sm"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Datasheet
+                </a>
+              )}
+              {component.product_url && (
+                <a
+                  href={component.product_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="link inline-flex items-center gap-1 text-sm"
+                  title={component.product_url}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  Buy
+                  {productRefLabel(component.product_vendor, component.product_sku) && (
+                    <span className="text-dark-textMuted">
+                      ({productRefLabel(component.product_vendor, component.product_sku)})
+                    </span>
+                  )}
+                </a>
+              )}
+            </div>
 
             {component.notes && (
               <div className="mt-4 p-3 bg-dark-elevated rounded text-sm text-dark-textMuted whitespace-pre-wrap">

@@ -46,6 +46,15 @@ class Component(db.Model):
     last_cost_order_id = db.Column(db.Integer, nullable=True)  # link target only, no FK
 
     datasheet_url = db.Column(db.String(500), nullable=True)
+
+    # Vendor purchase reference — the canonical "buy it here" product page, the
+    # vendor it points at, and that vendor's SKU (e.g. Adafruit product 258).
+    # product_url is the clickable link; vendor/sku are optional metadata for a
+    # tidy "Buy (Adafruit #258)" label in BOMs.
+    product_url = db.Column(db.String(500), nullable=True)
+    product_vendor = db.Column(db.String(30), nullable=True)  # one of ORDER_VENDORS or free text
+    product_sku = db.Column(db.String(100), nullable=True)
+
     image = db.Column(db.String(500), nullable=True)  # relative path under uploads/
     notes = db.Column(db.Text, nullable=True)
 
@@ -119,6 +128,9 @@ class Component(db.Model):
             'image': self.image,
             'image_url': f'/uploads/{self.image}' if self.image else None,
             'stock_status': self.stock_status,
+            'product_url': self.product_url,
+            'product_vendor': self.product_vendor,
+            'product_sku': self.product_sku,
             **self._cost_fields(),
         }
 
@@ -136,6 +148,9 @@ class Component(db.Model):
             'min_qty': self.min_qty,
             'location': self.location,
             'datasheet_url': self.datasheet_url,
+            'product_url': self.product_url,
+            'product_vendor': self.product_vendor,
+            'product_sku': self.product_sku,
             'image': self.image,
             'image_url': f'/uploads/{self.image}' if self.image else None,
             'notes': self.notes,

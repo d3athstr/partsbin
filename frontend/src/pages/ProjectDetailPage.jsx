@@ -8,6 +8,7 @@ import { errMsg } from '../services/api';
 import ComponentPicker from '../components/common/ComponentPicker';
 import ProjectModels from '../components/projects/ProjectModels';
 import { fmtDate, fmtMoney, fmtUnitMoney, fmtVariance } from '../utils/format';
+import { productRefLabel } from '../utils/vendors';
 
 // model3d is uploaded from its own section, not this dropdown
 const FILE_KINDS = ['image', 'pdf', 'schematic', 'firmware', 'other'];
@@ -358,6 +359,19 @@ const ProjectDetailPage = () => {
                         <Link to={`/inventory/${comp.id ?? line.component_id}`} className="link">
                           {comp.name || line.component_name || `#${line.component_id}`}
                         </Link>
+                        {comp.product_url && (
+                          <a
+                            href={comp.product_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="link text-xs ml-2 whitespace-nowrap"
+                            title={comp.product_url}
+                          >
+                            Buy ↗
+                            {productRefLabel(comp.product_vendor, comp.product_sku) &&
+                              ` (${productRefLabel(comp.product_vendor, comp.product_sku)})`}
+                          </a>
+                        )}
                         {line.note && (
                           <p className="text-xs text-dark-textMuted">{line.note}</p>
                         )}

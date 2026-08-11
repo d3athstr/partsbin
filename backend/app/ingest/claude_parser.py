@@ -12,13 +12,13 @@ MODEL = os.getenv('PARTSBIN_CLAUDE_MODEL', 'claude-sonnet-5')
 MAX_BODY_CHARS = 24000
 
 VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland',
-           'jlcpcb')
+           'jlcpcb', 'pololu')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
 SYSTEM_PROMPT = """You are a strict parser for vendor order emails feeding an \
 electronics inventory system. You receive one email (subject, sender, body) \
-from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio, Rokland or \
-JLCPCB (a PCB fabricator).
+from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio, Rokland, \
+Pololu (Robotics & Electronics) or JLCPCB (a PCB fabricator).
 
 Respond with ONLY a single JSON object - no prose, no explanation, no markdown \
 fences. The schema is:
@@ -26,7 +26,7 @@ fences. The schema is:
 {
   "is_order": boolean,          // true only for order confirmation / shipment / delivery notices
   "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
-          | "rokland" | "jlcpcb" | "other",
+          | "rokland" | "jlcpcb" | "pololu" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
@@ -43,6 +43,12 @@ fences. The schema is:
 }
 
 Rules:
+- The vendor is whoever SOLD the goods, which is not always who sent the
+  email. Much of this mail is FORWARDED from Don's own Outlook address
+  (Adafruit, Pololu, sometimes Seeed), so the From header is his address and
+  the real vendor is only visible in the forwarded body, subject or an
+  "Original Message" block - read those before deciding. Getting this wrong
+  files the order under "other", where it is invisible to the vendor filter.
 - Marketing, recommendations, review requests, refunds, account notices: is_order=false.
 - Delivery delay / "running late" / delivery-date-changed notices: is_order=false.
 - "Your order has been placed/confirmed" -> event "ordered".
@@ -237,7 +243,8 @@ def parse_order_email(subject, sender, body):
 
 COMPONENT_SYSTEM_PROMPT = """You turn raw vendor order-item titles into clean \
 component definitions for an electronics inventory. You receive a numbered list \
-of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland orders) and a \
+of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland/Pololu/JLCPCB \
+orders) and a \
 list of allowed categories.
 
 Respond with ONLY a single JSON object - no prose, no markdown fences:

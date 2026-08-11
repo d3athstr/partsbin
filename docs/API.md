@@ -18,7 +18,7 @@ POST /api/auth/logout ; GET /api/auth/me ; GET /api/auth/setup-totp ; POST /api/
 GET /api/components?search=&category=&tag=&location=&low_stock=1&out_of_stock=1
 GET /api/components/<id>  → component + recent transactions + used_in projects
 POST /api/components  {name, category, specs{}, manufacturer, mpn, description, qty_on_hand,
-  min_qty, location, datasheet_url, notes, tags[]}
+  min_qty, location, datasheet_url, product_url, product_vendor, product_sku, notes, tags[]}
 PUT /api/components/<id> ; DELETE /api/components/<id>
 POST /api/components/<id>/adjust {delta, note}          # manual stock ±, creates transaction
 POST /api/components/<id>/image (multipart) ; GET /uploads/components/<file>
