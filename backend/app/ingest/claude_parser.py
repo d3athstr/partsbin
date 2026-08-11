@@ -11,12 +11,14 @@ import re
 MODEL = os.getenv('PARTSBIN_CLAUDE_MODEL', 'claude-sonnet-5')
 MAX_BODY_CHARS = 24000
 
-VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland')
+VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland',
+           'jlcpcb')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
 SYSTEM_PROMPT = """You are a strict parser for vendor order emails feeding an \
 electronics inventory system. You receive one email (subject, sender, body) \
-from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio or Rokland.
+from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio, Rokland or \
+JLCPCB (a PCB fabricator).
 
 Respond with ONLY a single JSON object - no prose, no explanation, no markdown \
 fences. The schema is:
@@ -24,7 +26,7 @@ fences. The schema is:
 {
   "is_order": boolean,          // true only for order confirmation / shipment / delivery notices
   "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
-          | "rokland" | "other",
+          | "rokland" | "jlcpcb" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
@@ -57,6 +59,15 @@ Rules:
   {"title": "Electronics item"}. A placeholder is worse than an empty order:
   it becomes a junk line in the review queue and can fuzzy-match a real
   component. is_order stays true so the order itself is still recorded.
+- JLCPCB is a PCB FABRICATOR, not a parts store. Its invoices bill a build,
+  not a catalogue item. A board-fabrication line ("PCB", "1-2 Layer PCB",
+  "'osl-carrier' 5 pcs") IS inventory - the bare board gets stocked:
+  is_component=true, is_kit=false, qty = NUMBER OF BOARDS ordered,
+  units_per_item=1. Put the board/design name in the title when the email
+  gives one, so it can be matched to an existing PCB component.
+- JLCPCB non-board charges are NOT components: engineering/setup fees, stencil
+  fees, shipping, customs/tax, coupons and discounts -> is_component=false.
+  They still count toward the order total.
 - units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
   1 when unclear. Do NOT multiply it into qty - report them separately.
 - is_component: true for anything that belongs in an electronics/maker

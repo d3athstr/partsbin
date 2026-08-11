@@ -37,7 +37,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # spoofed-From phishing there would otherwise reach the parser.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
-    'OR seeed.cc OR rokland.com OR $INGEST_FORWARD_ADDRESS) '
+    'OR seeed.cc OR rokland.com OR jlcpcb.com OR $INGEST_FORWARD_ADDRESS) '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )
