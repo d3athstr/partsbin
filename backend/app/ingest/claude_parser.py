@@ -15,6 +15,23 @@ VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'ro
            'jlcpcb', 'pololu')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
+# Vendors whose PAYMENT receipts may stand in for a missing order email.
+#
+# A PayPal receipt is a poor substitute for the real thing: it carries
+# PayPal's transaction id rather than the vendor's order number, and usually
+# only the merchant and a total, so the order lands with no line items to
+# match against inventory. It is therefore allowed ONLY for vendors whose own
+# mail cannot reach ingestion at all.
+#
+# seeed: Seeed mails no-reply@notify.seeed.cc to Don's OUTLOOK address and has
+# never once reached his Gmail (verified 2026-08-11 over all time), so without
+# this the orders are simply invisible.
+#
+# Do NOT add a vendor that already mails Gmail directly - Pololu and Adafruit
+# both do, and a payment receipt for one of those would create a SECOND order
+# under a different number for a purchase already recorded.
+PAYMENT_FALLBACK_VENDORS = ('seeed',)
+
 SYSTEM_PROMPT = """You are a strict parser for vendor order emails feeding an \
 electronics inventory system. You receive one email (subject, sender, body) \
 from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio, Rokland, \
@@ -28,6 +45,8 @@ fences. The schema is:
   "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
           | "rokland" | "jlcpcb" | "pololu" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
+  "payment_derived": boolean,   // true only for a PAYMENT receipt (PayPal), not a seller email
+  "order_no_source": "merchant" | "paypal" | null,   // where order_no came from
   "event": "ordered" | "shipped" | "delivered" | null,
   "items": [                    // line items when present in the email, else []
     {"title": string, "qty": integer, "unit_price": number | null,
@@ -49,6 +68,20 @@ Rules:
   the real vendor is only visible in the forwarded body, subject or an
   "Original Message" block - read those before deciding. Getting this wrong
   files the order under "other", where it is invisible to the vendor filter.
+- PAYMENT receipts (PayPal "You sent a payment", "Receipt for your payment")
+  are NOT the seller's own order email. Handle them like this:
+  * vendor = the MERCHANT who was paid, read from the merchant/recipient name
+    ("Seeed Development Limited" -> "seeed"), never "paypal".
+  * Set payment_derived=true. This marks the order as reconstructed from a
+    payment rather than from the seller, where line items are usually absent.
+  * order_no: prefer the MERCHANT's own invoice/order number if the receipt
+    shows one. Only if it does not, use PayPal's transaction/receipt id.
+    Say which you used in order_no_source: "merchant" or "paypal".
+  * items: list them only if the receipt genuinely itemises the cart. A
+    single line naming the merchant, or the payment amount restated, is NOT
+    an item - return items=[] rather than inventing one.
+  * A payment receipt is always event "ordered". Refunds, disputes,
+    subscription and donation receipts are is_order=false.
 - Marketing, recommendations, review requests, refunds, account notices: is_order=false.
 - Delivery delay / "running late" / delivery-date-changed notices: is_order=false.
 - "Your order has been placed/confirmed" -> event "ordered".
@@ -165,6 +198,16 @@ def _normalize(parsed):
 
     order_no = parsed.get('order_no')
 
+    # A payment receipt only counts as an order for vendors whose own mail
+    # cannot reach us (PAYMENT_FALLBACK_VENDORS). For anyone else it would
+    # duplicate an order the seller's own email already created.
+    payment_derived = bool(parsed.get('payment_derived'))
+    if payment_derived and vendor not in PAYMENT_FALLBACK_VENDORS:
+        return {'is_order': False, 'vendor': vendor, 'order_no': None,
+                'event': None, 'items': [], 'total': None, 'tracking': None,
+                'carrier': None, 'eta': None, 'payment_derived': True,
+                'order_no_source': None, 'skipped_reason': 'payment receipt for a vendor that mails us directly'}
+
     # Grand total. Kept even when items is empty - a redacted Amazon
     # confirmation ("Ordered: 5 Electronics items") carries no titles at all,
     # so the total is the only substance the order has.
@@ -178,6 +221,10 @@ def _normalize(parsed):
 
     return {
         'total': total,
+        'payment_derived': payment_derived,
+        'order_no_source': (str(parsed.get('order_no_source')).lower()
+                            if parsed.get('order_no_source') in ('merchant', 'paypal')
+                            else None),
         'is_order': bool(parsed.get('is_order')),
         'vendor': vendor,
         'order_no': str(order_no).strip() if order_no else None,

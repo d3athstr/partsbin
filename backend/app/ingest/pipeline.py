@@ -98,11 +98,50 @@ def create_order_items(order, item_dicts, event='ordered', account=None):
     return created
 
 
+PAYMENT_NOTE = 'payment-derived: reconstructed from a PayPal receipt'
+# How far apart a payment receipt and the seller's own email may sit and still
+# be the same purchase. The receipt is usually within minutes; a hand-forward
+# can lag by a day or two.
+PAYMENT_TWIN_DAYS = 3
+
+
+def _payment_twin(vendor, account, total, order_date, want_payment_derived):
+    """Find the counterpart of a purchase recorded from the other side.
+
+    A PayPal receipt carries PayPal's transaction id, not the seller's order
+    number, so the two emails for ONE purchase cannot be matched the normal
+    way and would otherwise become two orders. They are matched instead on
+    (vendor, account, exact total, date within a few days).
+
+    want_payment_derived selects which side to look for: True finds an
+    existing payment-derived shell (so a real seller email can absorb it),
+    False finds a real order (so a receipt does not duplicate it).
+    """
+    if total is None or order_date is None:
+        return None  # without a total there is nothing safe to match on
+
+    candidates = Order.query.filter(
+        Order.vendor == vendor,
+        Order.gmail_account == account,
+        Order.total == total,
+    ).all()
+    for cand in candidates:
+        if cand.order_date is None:
+            continue
+        if abs((cand.order_date - order_date).days) > PAYMENT_TWIN_DAYS:
+            continue
+        is_payment = PAYMENT_NOTE in (cand.notes or '')
+        if is_payment == want_payment_derived:
+            return cand
+    return None
+
+
 def _upsert_order(account, message, parsed):
     """Create or update an Order from a parsed order email. Returns the Order."""
     vendor = parsed['vendor']
     order_no = parsed['order_no']
     event = parsed['event'] or 'ordered'
+    payment_derived = bool(parsed.get('payment_derived'))
 
     order = None
     if order_no:
@@ -115,6 +154,38 @@ def _upsert_order(account, message, parsed):
         order = Order.query.filter_by(
             vendor=vendor, tracking_no=parsed['tracking'], gmail_account=account,
         ).first()
+
+    # Reconcile the two sides of one purchase before creating anything.
+    if order is None:
+        msg_date = _message_date(message) or date.today()
+        twin = _payment_twin(vendor, account, parsed.get('total'), msg_date,
+                             want_payment_derived=not payment_derived)
+        if twin is not None:
+            if payment_derived:
+                # The seller's own email already recorded this purchase, and it
+                # has the real order number and any line items. Record that the
+                # receipt refers to it and stop - a second order would double
+                # the spend and, on receipt, the stock.
+                current_app.logger.info(
+                    f'PayPal receipt {message["id"]} matches existing '
+                    f'{vendor} order {twin.id} ({twin.vendor_order_no}) on '
+                    f'total/date; not creating a duplicate'
+                )
+                order = twin
+            else:
+                # Reverse case: a payment-derived shell got here first. Absorb
+                # it - adopt the seller's real order number and let the normal
+                # path below add the items the receipt never had.
+                current_app.logger.info(
+                    f'{vendor} order email {message["id"]} absorbs '
+                    f'payment-derived order {twin.id}; order_no '
+                    f'{twin.vendor_order_no} -> {order_no}'
+                )
+                if order_no:
+                    twin.vendor_order_no = order_no
+                twin.notes = ((twin.notes or '').replace(PAYMENT_NOTE, '').strip()
+                              or None)
+                order = twin
 
     if order is None and event != 'ordered':
         # Only the initial order-confirmation email may CREATE an order.
@@ -148,6 +219,15 @@ def _upsert_order(account, message, parsed):
         ):
             order.status = 'ignored'
             order.notes = 'auto-ignored: no electronics/maker items'.strip()
+        elif payment_derived:
+            # Flag the provenance: this order came from a payment receipt, so
+            # its number may be PayPal's and its items are probably missing.
+            source = parsed.get('order_no_source') or 'paypal'
+            order.notes = (
+                f'{PAYMENT_NOTE}; order_no from {source}. '
+                f'Line items are usually absent from a payment receipt - add '
+                f'them by hand or from the seller\'s own order email.'
+            )
     else:
         # Status only ever moves forward, and receipt stays a human action
         if (order.status != 'received'

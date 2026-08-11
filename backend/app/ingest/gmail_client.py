@@ -35,6 +35,15 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # 111-9687910-0033853 on 2026-07-14, trashed within 18 min of arrival.
 # Trash retains 30 days, well past the 14d lookback. Spam stays excluded:
 # spoofed-From phishing there would otherwise reach the parser.
+# paypal.com: PAYMENT receipts, a deliberate fallback for Seeed only (Don's
+# call, 2026-08-11). Seeed mail reaches his Outlook and never his Gmail, so a
+# forwarded PayPal receipt is the only way those purchases become orders. The
+# parser gates this on claude_parser.PAYMENT_FALLBACK_VENDORS: a receipt for
+# any vendor that mails us directly is discarded rather than duplicating an
+# order the seller's own email already made. Everything else PayPal touches
+# (donations, subscriptions, dog food) parses as is_order=false.
+# NOTE: PayPal mails his Outlook too, so this term is inert on its own — it
+# fires on the forwards, via $INGEST_FORWARD_ADDRESS below.
 # pololu.com: Pololu (Robotics & Electronics — regulators, motor drivers; the
 # S9V11F3S5 converter on the Sentinel carrier). Account registered 2026-08-11
 # and account mail (accounts@pololu.com) DOES reach Gmail directly, which is
@@ -46,7 +55,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
     'OR seeed.cc OR rokland.com OR jlcpcb.com OR pololu.com '
-    'OR $INGEST_FORWARD_ADDRESS) '
+    'OR paypal.com OR $INGEST_FORWARD_ADDRESS) '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )
