@@ -71,6 +71,12 @@ cutout has to be drafted around the physical part:
   - enclosures, panels, batteries, antennas, mechanical parts:
     dim_body_mm "L x W x H", dim_mount_mm for a hole pattern
 
+Report the dim_* keys even when the specs you were given already describe the
+size in prose (form_factor, holder_dimensions, a sentence in the description).
+The structured dim_* keys are what tooling reads; an existing prose mention
+does NOT mean the dimensions are already recorded, and duplicating it as dim_*
+is correct.
+
 Values are bare numbers, no unit suffix ("17.8 x 21.0", not "17.8mm x 21mm").
 Convert imperial to mm. Report a dimension ONLY from a datasheet, a
 dimensional drawing, or an explicit listing specification - never scale one
