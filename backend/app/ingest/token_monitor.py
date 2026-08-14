@@ -2,7 +2,7 @@
 
 Refreshes every stored Google grant on a timer (testing-mode tokens die ~7
 days after consent). When a grant is dead, emails the affected user their
-one-click re-auth link via the Shield SMTP relay, debounced to once per 24h
+one-click re-auth link via the SMTP relay, debounced to once per 24h
 via the ingest state file - same pattern as voice-reauth-monitor.
 """
 import os

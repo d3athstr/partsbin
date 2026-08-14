@@ -20,17 +20,17 @@ docs/        DESIGN.md (architecture + data model) · API.md (API contract)
 
 ## Production
 
-- VM 121 `partsbin` on pve4 (Ubuntu 24.04, partsbin.internal, disk on local-lvm).
-- Exposure: Cloudflare (proxied wildcard) → Shield nginx `parts.example.com` vhost (LE cert +
-  Cloudflare mTLS origin check) → VM nginx → gunicorn. EdgeRouter DMZ_IN rule 175 allows
-  Shield→VM:80.
+- Ubuntu 24.04 VM, disk on local storage.
+- Exposure: Cloudflare (proxied) → edge nginx `parts.example.com` vhost (LE cert + Cloudflare
+  mTLS origin check) → VM nginx → gunicorn. The perimeter firewall permits only the edge proxy
+  to reach the VM on :80.
 - Auth: app-native — bcrypt + TOTP 2FA + WebAuthn passkeys, invitation-gated registration.
-- Secrets: Vault `secret/<org>/partsbin/app`; Google OAuth client shared with the voice
-  assistant (`<org>/voice/google-oauth`); tokens live only on the VM in `/etc/partsbin/`.
+- Secrets: Vault `secret/<org>/partsbin/app`; Google OAuth client shared with another in-house
+  app; tokens live only on the VM in `/etc/partsbin/`.
 - Timers: `partsbin-ingest.timer` (30 min poll), `partsbin-token-monitor.timer` (6 h; emails a
   one-click re-auth link when a Google testing-mode token dies, ~every 7 days).
-- Backups: nightly 02:15 pg_dump + uploads → CITADEL NFS `BKUP/PartsBin/`, 14-day retention.
-- Monitoring: Wazuh agent 084; ops `webapp-monitor.sh` probes `/api/health`.
+- Backups: nightly 02:15 pg_dump + uploads → NAS NFS share, 14-day retention.
+- Monitoring: Wazuh agent; an external monitor probes `/api/health`.
 
 ## Deploy / update
 
@@ -42,4 +42,4 @@ ssh root@partsbin.internal 'cd /opt/partsbin/frontend && npm ci && npm run build
 ```
 
 Full bootstrap of a fresh VM: `deployment/setup.sh` (see `docs/DESIGN.md` for the manual steps
-actually used for VM 121: Vault-sourced `.env`, DB role/db, systemd units, nginx).
+actually used in production: Vault-sourced `.env`, DB role/db, systemd units, nginx).

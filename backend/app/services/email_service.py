@@ -16,7 +16,7 @@ def _log_error(msg):
 
 
 def get_smtp_config():
-    """Get SMTP configuration from environment (Shield relay by default)"""
+    """Get SMTP configuration from environment (SMTP relay)"""
     return {
         'host': os.getenv('SMTP_HOST', 'smtp.internal'),
         'port': int(os.getenv('SMTP_PORT', 25)),

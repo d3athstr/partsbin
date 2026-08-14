@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # PartsBin nightly backup: pg_dump + uploads tarball written directly to the
-# CITADEL BKUP NFS mount (nas.internal:/mnt/DATA/Home/BKUP on /mnt/nfs/backup),
+# NAS backup NFS mount (mounted at /mnt/nfs/backup),
 # same pattern as GarmentGallery2. 14-day retention.
 #
 # Cron (root): 15 2 * * * /opt/partsbin/deployment/backup.sh
@@ -14,7 +14,7 @@ STAGING_DIR=/mnt/nfs/backup/PartsBin
 
 ls /mnt/nfs/backup >/dev/null 2>&1 || true   # trigger systemd automount
 if ! mountpoint -q /mnt/nfs/backup; then
-    echo "ERROR: /mnt/nfs/backup (CITADEL BKUP NFS) not mounted; skipping backup" >&2
+    echo "ERROR: /mnt/nfs/backup (backup NFS) not mounted; skipping backup" >&2
     exit 1
 fi
 RETENTION_DAYS=14

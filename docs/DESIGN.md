@@ -3,9 +3,10 @@
 Electronics component inventory + project documentation for Empire12 (Don & DeAnna).
 Sister app to Garment Gallery (GarmentGallery2) — same architecture, auth, and exposure pattern.
 
-- **Host:** `partsbin` VM 121 on pve4, partsbin.internal, Ubuntu 24.04, disk on pve4 local-lvm (NOT NVME-Pool Ceph)
-- **URL:** https://parts.example.com (Shield nginx vhost → partsbin.internal; Cloudflare proxied wildcard in front, mTLS origin check)
-- **Repo:** github.com/d3athstr/partsbin (private)
+- **Host:** `partsbin`, an Ubuntu 24.04 VM on local (non-replicated) storage
+- **URL:** `https://parts.example.com` — edge reverse proxy → this VM, with Cloudflare proxied in
+  front and an mTLS origin check
+- **Repo:** github.com/d3athstr/partsbin
 
 ## Stack (mirrors GarmentGallery2)
 
@@ -54,8 +55,9 @@ RF Modules (WiFi/BLE/LoRa), Audio, Mechanical, Tools, Other.
    `from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com OR seeed.cc OR
    $INGEST_FORWARD_ADDRESS) in:anywhere -in:spam -from:pharmacy.amazon.com
    -subject:"Amazon Pharmacy" newer_than:14d`, skip message-ids already in ProcessedMessage.
-   (`aliexpress` is bare because duck.com rewrites the From; Don's Outlook address forwards
-   Adafruit mail; `in:anywhere` catches order mail trashed before the next run.)
+   (`aliexpress` is bare because duck.com rewrites the From; `INGEST_FORWARD_ADDRESS` is the
+   secondary mailbox that auto-forwards vendor mail — forwards carry ITS address in From, not
+   the vendor's; `in:anywhere` catches order mail trashed before the next run.)
 3. Each new message → Claude API (claude-sonnet-5) extracts JSON:
    `{is_order, vendor, order_no, event: ordered|shipped|delivered, items:[{title, qty, unit_price}], tracking, carrier, eta}`.
    Non-order mail marked processed and skipped.
@@ -66,7 +68,7 @@ RF Modules (WiFi/BLE/LoRa), Audio, Mechanical, Tools, Other.
    refresh tokens (`/etc/partsbin/google-tokens.json`, root-only). Re-auth: `GET
    /api/oauth/login/<user>?key=<ingest_key>` → Google consent → `/api/oauth/callback`.
    `partsbin-token-monitor.timer` keep-alive-refreshes tokens and emails the affected user their
-   one-click re-auth link via Shield SMTP when a grant dies (testing-mode tokens expire ~7 days
+   one-click re-auth link via the SMTP relay when a grant dies (testing-mode tokens expire ~7 days
    after consent), debounced 24 h — same pattern as voice-reauth-monitor.
 6. Known gap: AliExpress notifications tied to Don's Apple ID go to iCloud mail. Fix is a one-time
    iCloud rule forwarding AliExpress mail to Don's Gmail (punch list).
@@ -87,10 +89,9 @@ Settings (TOTP, passkeys, invitations, Gmail account cards with token status + r
 
 - Secrets in `.env` on the VM (root:deploy 640), sourced from Vault `secret/<org>/partsbin/*`
   at deploy: flask secret, DB password, Google client id/secret, Anthropic API key, ingest key.
-- Shield vhost identical to patterns.example.com.conf (LE cert, cloudflare-mTLS snippets,
-  block-scanners). App itself enforces login on every /api route.
-- Nightly backup: pg_dump + uploads tarball → CITADEL NFS /mnt/DATA/Home/BKUP/PARTSBIN/ (14-day
-  retention), cron on the VM.
-- qemu-guest-agent, Wazuh agent (≤ 4.9.2), NetBox VM + IP registration, PiHole DNS
-  (partsbin + parts.example.com → partsbin.internal internal-direct? No — parts goes through
-  Shield like patterns; only `partsbin.internal` A-record → .21).
+- Edge vhost carries the LE cert, the Cloudflare mTLS snippets and scanner blocking. The app
+  itself enforces login on every /api route.
+- Nightly backup: pg_dump + uploads tarball → NAS NFS share (14-day retention), cron on the VM.
+- qemu-guest-agent, Wazuh agent (≤ 4.9.2), CMDB registration, and a LAN DNS record. Note the
+  public hostname resolves through the edge proxy, not direct to the VM — only the
+  internal-only name points at the VM itself.

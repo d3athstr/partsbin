@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# PartsBin - idempotent VM bootstrap (Ubuntu 24.04, VM 121 "partsbin")
+# PartsBin - idempotent VM bootstrap (Ubuntu 24.04)
 #
 # Installs OS deps, creates the deploy user, PostgreSQL role/database, the
 # Python venv, .env from template, runs migrations and installs the systemd

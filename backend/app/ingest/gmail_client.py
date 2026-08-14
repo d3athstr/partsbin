@@ -12,55 +12,60 @@ import tempfile
 from datetime import datetime
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-# 'aliexpress' is deliberately bare: Don's AliExpress mail arrives via a
-# duck.com forwarding alias that rewrites the From address to
+
+# INGEST_FORWARD_ADDRESS: a secondary mailbox that auto-forwards order mail
+# into the polled Gmail account. Set it in the backend .env — it is deliberately
+# not hardcoded here. Forwards carry the FORWARDER's address in From, not the
+# vendor's, so without this term every forwarded order is invisible to the
+# query no matter how many vendor domains are listed. Several terms below are
+# inert on their own and depend on it. Non-order mail forwarded from there is
+# discarded by the Claude parser.
+FORWARD_ADDRESS = os.getenv('INGEST_FORWARD_ADDRESS', '').strip()
+
+# 'aliexpress' is deliberately bare: AliExpress mail can arrive via a duck.com
+# forwarding alias that rewrites the From address to
 # <sender>_at_<domain>_<hash>@duck.com, so from:aliexpress.com never matches.
-# $INGEST_FORWARD_ADDRESS: Don's Outlook address auto-forwards his Adafruit
-# order mail into Gmail; forwards carry HIS address in From, not adafruit.com.
-# Non-order mail forwarded from there is discarded by the Claude parser.
 # rokland.com: Rokland (LoRa/Meshtastic antennas, RAKwireless gear). VERIFIED
-# 2026-08-09 against order #119503 — they send from sales@rokland.com straight
-# to Don's Gmail, so this term does the work on its own.
-# seeedstudio.com: Seeed's OTHER domain, added 2026-08-11 after Don noticed
-# seeed.cc mail arriving and seeedstudio.com mail not. from:seeed.cc matches
-# its subdomains (notify.seeed.cc) but NOT a separate domain, so anything sent
-# from seeedstudio.com - including the payment@seeedstudio.com address PayPal
-# shows as the merchant - was invisible to the query.
-# seeed.cc: Seeed Studio, and a CAVEAT worth reading before trusting it.
-# Seeed sends from no-reply@notify.seeed.cc (subdomain — from:seeed.cc still
-# matches) but addresses it to Don's OUTLOOK account, not his Gmail. Order
-# #4000565798 reached ingestion only because Don forwarded it by hand, i.e. via
-# the $INGEST_FORWARD_ADDRESS term below, >24h after Seeed sent it. So this
-# term is correct but INERT for Don: it fires only if Seeed ever mails Gmail
-# directly. Real Seeed coverage needs his Outlook auto-forward rule widened
-# past Adafruit, or his Seeed account switched to the Gmail address.
+# 2026-08-09 against a real order — they send from sales@rokland.com straight
+# to Gmail, so this term does the work on its own.
+# seeedstudio.com: Seeed's OTHER domain, added 2026-08-11 after seeed.cc mail
+# was arriving and seeedstudio.com mail was not. from:seeed.cc matches its
+# subdomains (notify.seeed.cc) but NOT a separate domain, so anything sent from
+# seeedstudio.com - including the payment@seeedstudio.com address PayPal shows
+# as the merchant - was invisible to the query.
+# seeed.cc: Seeed Studio, and a CAVEAT worth reading before trusting it. Seeed
+# sends from no-reply@notify.seeed.cc (subdomain — from:seeed.cc still matches)
+# but addresses it to the SECONDARY mailbox, not the polled Gmail account. The
+# one order that reached ingestion did so only because it was forwarded by hand
+# >24h later, i.e. via INGEST_FORWARD_ADDRESS. So this term is correct but
+# INERT here: it fires only if Seeed ever mails Gmail directly. Real coverage
+# needs the auto-forward rule widened past Adafruit, or the vendor account
+# switched to the Gmail address.
 # in:anywhere -in:spam: order mail deleted from the inbox before the next
 # 30-min ingest run is otherwise invisible (Gmail search skips Trash by
-# default) and never gets an order row — happened to Amazon order
-# 111-9687910-0033853 on 2026-07-14, trashed within 18 min of arrival.
-# Trash retains 30 days, well past the 14d lookback. Spam stays excluded:
-# spoofed-From phishing there would otherwise reach the parser.
-# paypal.com: PAYMENT receipts, a deliberate fallback for Seeed only (Don's
-# call, 2026-08-11). Seeed mail reaches his Outlook and never his Gmail, so a
+# default) and never gets an order row — happened to an Amazon order on
+# 2026-07-14, trashed within 18 min of arrival. Trash retains 30 days, well
+# past the 14d lookback. Spam stays excluded: spoofed-From phishing there would
+# otherwise reach the parser.
+# paypal.com: PAYMENT receipts, a deliberate fallback for Seeed only
+# (2026-08-11). Seeed mail reaches the secondary mailbox and never Gmail, so a
 # forwarded PayPal receipt is the only way those purchases become orders. The
 # parser gates this on claude_parser.PAYMENT_FALLBACK_VENDORS: a receipt for
 # any vendor that mails us directly is discarded rather than duplicating an
 # order the seller's own email already made. Everything else PayPal touches
-# (donations, subscriptions, dog food) parses as is_order=false.
-# NOTE: PayPal mails his Outlook too, so this term is inert on its own — it
-# fires on the forwards, via $INGEST_FORWARD_ADDRESS below.
-# pololu.com: Pololu (Robotics & Electronics — regulators, motor drivers; the
-# S9V11F3S5 converter on the Sentinel carrier). Account registered 2026-08-11
-# and account mail (accounts@pololu.com) DOES reach Gmail directly, which is
-# why this term is here. But Don says his ORDER mail will arrive as an Outlook
-# FORWARD, so in practice it is the $INGEST_FORWARD_ADDRESS term below that
-# carries it — and that only works if his Outlook auto-forward rule actually
-# includes Pololu. It currently covers Adafruit only, which is exactly how
-# Seeed ended up inert. Widen the rule or forward by hand.
+# parses as is_order=false.
+# NOTE: PayPal mails the secondary mailbox too, so this term is inert on its
+# own — it fires on the forwards, via INGEST_FORWARD_ADDRESS.
+# pololu.com: Pololu (Robotics & Electronics — regulators, motor drivers).
+# Account mail (accounts@pololu.com) DOES reach Gmail directly, which is why
+# this term is here. But ORDER mail arrives as a forward, so in practice it is
+# INGEST_FORWARD_ADDRESS that carries it — and that only works if the
+# auto-forward rule actually includes Pololu. It covers Adafruit only, which is
+# exactly how Seeed ended up inert. Widen the rule or forward by hand.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
     'OR seeed.cc OR seeedstudio.com OR rokland.com OR jlcpcb.com OR pololu.com '
-    'OR paypal.com OR $INGEST_FORWARD_ADDRESS) '
+    'OR paypal.com' + (f' OR {FORWARD_ADDRESS}' if FORWARD_ADDRESS else '') + ') '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )
