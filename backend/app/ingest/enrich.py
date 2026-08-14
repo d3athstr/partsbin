@@ -34,6 +34,8 @@ inventory system. Use web search to locate:
 3. metadata - manufacturer, manufacturer part number, a one-sentence
    description, and technical specs (short key/value strings) you can verify
    from what you find.
+4. dimensions - the mechanical numbers a PCB or enclosure has to be drafted
+   around, reported as specs keys. See DIMENSIONS below.
 
 Respond with ONLY one JSON object, no prose, no markdown fences:
 {"image_urls": [string, ...], "datasheet_url": string|null,
@@ -51,6 +53,31 @@ N16R8 vs N8R2, USB-C vs micro-USB, WROOM module vs third-party carrier
 board). Only report specs verified for the EXACT variant in the component
 name; a family/module datasheet is acceptable but never one for a different
 variant. When variant facts conflict across sources, omit them.
+
+DIMENSIONS - millimetres, verified only, reported as specs keys.
+
+KiCad already ships footprints for standard packages, so when the part is an
+ordinary component in a named package (0805, SOT-23, DO-41, DO-201AD, TO-220,
+DIP-8...) the package name IS the footprint: report `package` and stop. Spend
+the effort on parts that have no standard footprint, where a board or a panel
+cutout has to be drafted around the physical part:
+
+  - modules / dev boards / breakouts (XIAO, buck converters, OLED panels,
+    sensor boards): dim_body_mm "L x W", dim_height_mm, dim_hole_pitch_mm,
+    dim_hole_dia_mm, dim_pin_pitch_mm, dim_pin_rows
+  - radial and axial through-hole parts: dim_body_mm ("D x H" radial,
+    "L x D" axial), dim_lead_spacing_mm, dim_lead_dia_mm
+  - connectors and headers: dim_pitch_mm, dim_body_mm, dim_pin_dia_mm
+  - enclosures, panels, batteries, antennas, mechanical parts:
+    dim_body_mm "L x W x H", dim_mount_mm for a hole pattern
+
+Values are bare numbers, no unit suffix ("17.8 x 21.0", not "17.8mm x 21mm").
+Convert imperial to mm. Report a dimension ONLY from a datasheet, a
+dimensional drawing, or an explicit listing specification - never scale one
+off a product photo and never carry one over from a similar part. Unbranded
+marketplace modules frequently publish no drawing at all; omitting the
+dimensions is the correct answer there, and a wrong number is far worse than
+a missing one because a board gets fabbed around it.
 
 If you cannot find a confident, directly-linkable asset or verifiable fact,
 use null / omit the spec - never guess or fabricate."""
