@@ -16,6 +16,7 @@ from app.models.order import Order, OrderItem, STATUS_RANK
 from app.models.processed_message import ProcessedMessage
 from app.models.component import Component
 from app.ingest import gmail_client
+from app.ingest import imap_client
 from app.ingest.matcher import best_match, MATCH_THRESHOLD, AUTO_CONFIRM_THRESHOLD
 
 
@@ -118,10 +119,30 @@ def create_order_items(order, item_dicts, event='ordered', account=None):
 
 
 PAYMENT_NOTE = 'payment-derived: reconstructed from a PayPal receipt'
+# Marker line for the split-checkout warning, so re-flagging replaces the
+# previous line instead of stacking a new one on every duplicate copy.
+SPLIT_NOTE_MARKER = 'SPLIT CHECKOUT:'
 # How far apart a payment receipt and the seller's own email may sit and still
 # be the same purchase. The receipt is usually within minutes; a hand-forward
 # can lag by a day or two.
 PAYMENT_TWIN_DAYS = 3
+# End of the generated payment note, used to remove the WHOLE sentence on
+# absorb. Stripping only PAYMENT_NOTE leaves its tail ("; order_no from
+# paypal. Line items are usually absent...") stranded on an order that now
+# has the seller's real order number and items - a note that contradicts the
+# row it is attached to.
+_PAYMENT_NOTE_END = "own order email."
+
+
+def _strip_payment_note(notes):
+    """Drop the machine-written payment-provenance note, keeping human text."""
+    if not notes or PAYMENT_NOTE not in notes:
+        return notes or None
+    head, _, tail = notes.partition(PAYMENT_NOTE)
+    end = tail.find(_PAYMENT_NOTE_END)
+    if end != -1:
+        tail = tail[end + len(_PAYMENT_NOTE_END):]
+    return (head + tail).strip() or None
 
 
 def _payment_twin(vendor, account, total, order_date, want_payment_derived):
@@ -155,6 +176,44 @@ def _payment_twin(vendor, account, total, order_date, want_payment_derived):
     return None
 
 
+def _flag_split_checkout(order):
+    """Warn that this order is 1 of N sub-orders and the rest are not in mail.
+
+    AliExpress splits one checkout into a sub-order per seller and mails an
+    "order confirmed" for each - but every copy carries the FIRST sub-order's
+    number, its items and its total. All N copies therefore land on one order
+    here, and the other sub-orders' refs and items appear NOWHERE in the mail
+    (verified against the raw bodies, 2026-08-15: five byte-identical copies).
+
+    They cannot be recovered from mail - only the website order list has them -
+    so the one thing this must not do is look successful. Before this, the run
+    logged "orders: 5" while recording 1 sub-order of 5 and dropping the rest.
+
+    Deliberately states NO sub-order count. The only thing countable here is
+    duplicate EMAILS, and that is not the number of sub-orders: the same
+    confirmation also arrives via the forwarding mailbox, and later mail lands
+    on the same order, so a count would have read "13 sub-orders" for a 5-way
+    split. A wrong number sends Don hunting for orders that do not exist, which
+    is worse than sending him to the page that lists the real ones.
+
+    Note this is NOT the item-backfill case handled below: that one fires when
+    the order has no items at all. Here the order is fully populated from copy
+    #1, so nothing looks wrong at the row level.
+    """
+    note = (f'{SPLIT_NOTE_MARKER} more than one order-confirmation email arrived for '
+            f'this order number, which means the checkout was SPLIT into per-seller '
+            f'sub-orders and every email carried only THIS sub-order\'s items. The '
+            f'others are in no email and are not in PartsBin. Open the vendor order '
+            f'list on the website, find the sub-orders sharing this order date, and '
+            f'add the missing ones by hand.')
+    kept = [ln for ln in (order.notes or '').splitlines()
+            if ln.strip() and not ln.startswith(SPLIT_NOTE_MARKER)]
+    order.notes = '\n'.join(kept + [note])
+    # Transient (not a column): lets the run summary report the flag, so a run
+    # that quietly dropped sub-orders no longer looks like a clean success.
+    order._split_flagged = True
+
+
 def _upsert_order(account, message, parsed):
     """Create or update an Order from a parsed order email. Returns the Order."""
     vendor = parsed['vendor']
@@ -163,6 +222,7 @@ def _upsert_order(account, message, parsed):
     payment_derived = bool(parsed.get('payment_derived'))
 
     order = None
+    absorbed_payment_shell = False
     if order_no:
         order = Order.query.filter_by(
             vendor=vendor, vendor_order_no=order_no, gmail_account=account,
@@ -202,9 +262,17 @@ def _upsert_order(account, message, parsed):
                 )
                 if order_no:
                     twin.vendor_order_no = order_no
-                twin.notes = ((twin.notes or '').replace(PAYMENT_NOTE, '').strip()
-                              or None)
+                twin.notes = _strip_payment_note(twin.notes)
                 order = twin
+                # The shell has no items by construction, so this email is the
+                # first and ONLY source of them. Without this flag the update
+                # branch below - written for shipped/delivered mail, which must
+                # never add items - silently drops every line item the seller
+                # sent, leaving an order that knows its total but not its
+                # contents. (Bug from the 2026-08-11 payment-fallback work,
+                # unnoticed because the absorb path had never run on real mail
+                # until eBay 2026-08-12.)
+                absorbed_payment_shell = True
 
     if order is None and event != 'ordered':
         # Only the initial order-confirmation email may CREATE an order.
@@ -248,6 +316,15 @@ def _upsert_order(account, message, parsed):
                 f'them by hand or from the seller\'s own order email.'
             )
     else:
+        # A SECOND order-confirmation for an order we already have. A resend is
+        # harmless, but on AliExpress it means a split checkout whose other
+        # sub-orders no email will ever name - see _flag_split_checkout. Gated
+        # on a message id the order has not seen, so re-processing the same
+        # mail (or the forwarding mailbox's copy of it) cannot re-flag.
+        if (event == 'ordered' and vendor == 'aliexpress'
+                and message['id'] not in (order.gmail_message_ids or [])):
+            _flag_split_checkout(order)
+
         # Status only ever moves forward, and receipt stays a human action
         if (order.status != 'received'
                 and STATUS_RANK.get(event, 0) > STATUS_RANK.get(order.status, 0)):
@@ -269,6 +346,21 @@ def _upsert_order(account, message, parsed):
         md = _order_date(message, parsed)
         if md and (order.order_date is None or md < order.order_date):
             order.order_date = md
+
+        # Items for an order that has NONE. Two ways to get here: this email
+        # just absorbed a payment-derived shell (item-less by construction),
+        # or it is an order-confirmation for an order recorded without items
+        # - a shell whose number was adopted on an earlier run, or a redacted
+        # Amazon confirmation later superseded by a fuller one.
+        #
+        # Safe because it requires the order to have NO items at all, so
+        # there is nothing to duplicate, and create_order_items still applies
+        # its own combined-shipment guard. A shipped/delivered notice for an
+        # order that already has items is unaffected - that path must stay
+        # item-less, which is what kept stock straight for combined shipments.
+        if (parsed['items'] and not order.items.count()
+                and (absorbed_payment_shell or event == 'ordered')):
+            create_order_items(order, parsed['items'], event=event, account=account)
 
     return order
 
@@ -299,36 +391,69 @@ def _maybe_auto_receive(order):
     return True
 
 
-def run_ingest(accounts=None):
-    """Run one ingestion pass across all authorized Gmail accounts.
+def _ingest_sources(accounts=None):
+    """Message sources for one pass: (account, source, poll_fn, needs_token).
 
-    Returns a per-account summary list.
+    The dedicated PartsBin mailbox is appended when configured. It is the
+    PRIMARY source by intent -- it does not expire like the Gmail OAuth token
+    and needs no sender allowlist -- but Gmail polling is deliberately left
+    running alongside it so a gap in forwarding cannot silently lose orders.
+    Duplicates are harmless: _upsert_order dedupes on (vendor, order_no) and
+    _payment_twin covers receipts that carry no order number.
+    """
+    sources = []
+    for account in accounts or gmail_client.get_accounts():
+        sources.append((account, 'gmail', gmail_client.poll_account, True))
+    if imap_client.is_enabled():
+        cfg = imap_client.imap_config()
+        if accounts is None or cfg['account'] in accounts:
+            sources.append((cfg['account'], 'mailbox', imap_client.poll_account, False))
+    return sources
+
+
+def run_ingest(accounts=None):
+    """Run one ingestion pass across every configured source.
+
+    Returns a per-source summary list.
     """
     from app.ingest.claude_parser import parse_order_email
 
     summary = []
-    for account in accounts or gmail_client.get_accounts():
+    for account, source, poll_fn, needs_token in _ingest_sources(accounts):
         result = {
             'account': account,
+            'source': source,
             'fetched': 0,
             'orders': 0,
             'non_order': 0,
             'errors': 0,
         }
 
-        if account not in gmail_client.load_tokens():
+        if needs_token and account not in gmail_client.load_tokens():
             result['error'] = 'no token stored'
             summary.append(result)
             continue
 
-        known_ids = {
-            row.message_id
-            for row in ProcessedMessage.query.filter_by(gmail_account=account)
-            .with_entities(ProcessedMessage.message_id)
-        }
+        if source == 'mailbox':
+            # Attribution is PER MESSAGE here (Don and DeAnna share the
+            # mailbox), so dedupe against every account's processed ids.
+            # RFC822 Message-IDs are globally unique, so this cannot
+            # false-skip another account's mail.
+            known_ids = {
+                row.message_id
+                for row in ProcessedMessage.query.with_entities(
+                    ProcessedMessage.message_id)
+            }
+        else:
+            known_ids = {
+                row.message_id
+                for row in ProcessedMessage.query.filter_by(gmail_account=account)
+                .with_entities(ProcessedMessage.message_id)
+            }
 
         try:
-            for message in gmail_client.poll_account(account, known_ids):
+            for message in poll_fn(account, known_ids):
+                msg_account = message.get('account') or account
                 result['fetched'] += 1
                 try:
                     # Pharmacy mail is excluded from the Gmail query too; this
@@ -342,7 +467,7 @@ def run_ingest(accounts=None):
                     if 'pharmacy' in sender_l or 'amazon pharmacy' in subject_l \
                             or is_delay_notice:
                         db.session.add(ProcessedMessage(
-                            gmail_account=account,
+                            gmail_account=msg_account,
                             message_id=message['id'],
                             is_order=False,
                         ))
@@ -355,16 +480,25 @@ def run_ingest(accounts=None):
                     )
 
                     processed = ProcessedMessage(
-                        gmail_account=account,
+                        gmail_account=msg_account,
                         message_id=message['id'],
                         is_order=bool(parsed and parsed['is_order']),
                     )
 
                     if parsed and parsed['is_order']:
-                        order = _upsert_order(account, message, parsed)
+                        order = _upsert_order(msg_account, message, parsed)
                         if order is not None:
                             processed.order_id = order.id
                             result['orders'] += 1
+                            if getattr(order, '_split_flagged', False):
+                                order._split_flagged = False
+                                result['split_checkouts'] = \
+                                    result.get('split_checkouts', 0) + 1
+                                current_app.logger.warning(
+                                    f'{order.vendor} order {order.vendor_order_no} '
+                                    f'got a duplicate order-confirmation: split '
+                                    f'checkout, sub-orders missing from email'
+                                )
                             if _maybe_auto_receive(order):
                                 result['auto_received'] = result.get('auto_received', 0) + 1
                         else:
@@ -378,17 +512,20 @@ def run_ingest(accounts=None):
                     db.session.rollback()
                     result['errors'] += 1
                     current_app.logger.error(
-                        f'Failed to process message {message["id"]} ({account}): {e}'
+                        f'Failed to process message {message["id"]} ({msg_account}/{source}): {e}'
                     )
 
-            gmail_client.update_state(
-                account,
-                last_poll=datetime.utcnow().isoformat(),
-                last_error=None,
-            )
+            if needs_token:
+                gmail_client.update_state(
+                    account,
+                    last_poll=datetime.utcnow().isoformat(),
+                    last_error=None,
+                )
         except Exception as e:
-            current_app.logger.error(f'Ingest poll failed for {account}: {e}')
-            gmail_client.update_state(account, last_error=str(e))
+            current_app.logger.error(
+                f'Ingest poll failed for {account} ({source}): {e}')
+            if needs_token:
+                gmail_client.update_state(account, last_error=str(e))
             result['error'] = str(e)
 
         summary.append(result)
@@ -426,4 +563,10 @@ def ingest_status():
             'processed_count': processed_query.count(),
             'order_count': processed_query.filter_by(is_order=True).count(),
         })
+
+    # The dedicated mailbox. Reported alongside the Gmail accounts so a broken
+    # mailbox is as visible as a dead token -- the whole point of moving here
+    # was that silent ingestion failures cost two days in August.
+    if imap_client.is_enabled():
+        statuses.append(imap_client.status())
     return statuses
