@@ -15,6 +15,11 @@ dist/
 # Uploaded files
 uploads/
 
+# One-off recovery/backfill scripts that carry REAL order data (vendor order
+# numbers, seller names, line prices). This repo is PUBLIC - a VM-side rsync
+# would otherwise re-add them on the next sync. Keep them on the VM only.
+backend/scripts/aliexpress_recover_*.py
+
 # Misc
 *.log
 .DS_Store
