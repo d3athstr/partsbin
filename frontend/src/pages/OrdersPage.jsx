@@ -9,7 +9,7 @@ import { vendorOrderUrl } from '../utils/vendors';
 
 const PER_PAGE = 25;
 const STATUSES = ['ordered', 'shipped', 'delivered', 'received', 'ignored'];
-const VENDORS = ['amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland', 'jlcpcb', 'pololu', 'other'];
+const VENDORS = ['amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland', 'jlcpcb', 'pololu', 'ebay', 'polycase', 'onlinemetals', 'yakima', 'other'];
 
 /**
  * An order "needs review" when any of its items still needs a human

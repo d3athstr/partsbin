@@ -28,6 +28,29 @@ def _active_project_demand():
     return {r.cid: int(r.need) for r in rows}
 
 
+def _component_projects(component_ids):
+    """{component_id: [project name, ...]} for the given components.
+
+    Unlike _active_project_demand() this covers projects of EVERY status. The
+    On Order card answers "what did I buy this for?", and the answer is just as
+    useful for a planning project as an active one -- most parts are bought
+    before their project goes active.
+    """
+    if not component_ids:
+        return {}
+    rows = (db.session.query(ProjectComponent.component_id, Project.name)
+            .join(Project, Project.id == ProjectComponent.project_id)
+            .filter(ProjectComponent.component_id.in_(list(component_ids)))
+            .order_by(Project.name)
+            .all())
+    out = {}
+    for cid, name in rows:
+        names = out.setdefault(cid, [])
+        if name not in names:
+            names.append(name)
+    return out
+
+
 @dashboard_bp.route('/dashboard', methods=['GET'])
 @login_required
 def dashboard():
@@ -43,13 +66,29 @@ def dashboard():
     demand_ids = list(demand.keys())
     demand_match = Component.id.in_(demand_ids) if demand_ids else sa_false()
 
-    # OUT OF STOCK: none on hand, and either an active project needs it or you
-    # keep it stocked (min_qty > 0).
+    # OUT OF STOCK: none on hand, nothing already on the way, and either an
+    # active project needs it or you keep it stocked (min_qty > 0).
+    #
+    # Parts already ORDERED are excluded deliberately (Don, 2026-08-12): once
+    # you have bought it, listing it as an exception is noise you cannot act on.
+    # They surface as stock_status 'on_order' instead. qty_on_order counts
+    # confirmed matches on orders still in flight, so a received order does not
+    # suppress anything.
     out_of_stock = (Component.query
                     .filter(Component.qty_on_hand <= 0)
+                    .filter(Component.qty_on_order <= 0)
                     .filter(or_(Component.min_qty > 0, demand_match))
                     .order_by(Component.name)
                     .limit(50).all())
+
+    # Bought but not yet arrived - shown separately so it reads as progress
+    # rather than as a fault.
+    on_order = (Component.query
+                .filter(Component.qty_on_hand <= 0)
+                .filter(Component.qty_on_order > 0)
+                .filter(or_(Component.min_qty > 0, demand_match))
+                .order_by(Component.name)
+                .limit(50).all())
 
     # LOW STOCK: some on hand, but at/below the min_qty threshold or short of an
     # active project's remaining demand.
@@ -61,6 +100,8 @@ def dashboard():
     low_stock = [c for c in low_candidates
                  if (c.min_qty and c.qty_on_hand <= c.min_qty)
                  or (c.id in demand and c.qty_on_hand < demand[c.id])][:50]
+    _oo_projects = _component_projects([c.id for c in on_order])
+
     recent_orders = (_visible_orders()
                      .order_by(Order.created_at.desc())
                      .limit(5).all())
@@ -75,6 +116,10 @@ def dashboard():
     return {
         'low_stock': [c.to_dict() for c in low_stock],
         'out_of_stock': [c.to_dict() for c in out_of_stock],
+        'on_order': [
+            {**c.to_dict(), 'projects': _oo_projects.get(c.id, [])}
+            for c in on_order
+        ],
         'pending_review': len(pending_review_orders()),
         'recent_orders': [o.to_dict() for o in recent_orders],
         'ingest': ingest,

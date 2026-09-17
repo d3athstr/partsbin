@@ -22,8 +22,17 @@ const TokenStatus = ({ status }) => {
 };
 
 const ExceptionList = ({ title, items, tone, emptyText }) => {
-  const border = tone === 'alarm' ? 'border-l-dark-error' : 'border-l-dark-warning';
-  const heading = tone === 'alarm' ? 'text-dark-error' : 'text-dark-warning';
+  // ISA-101: colour means an operator decision is owed. 'muted' is for states
+  // that are merely informational — an already-ordered part is not a fault, so
+  // it gets no alarm colour at all.
+  const border =
+    tone === 'alarm' ? 'border-l-dark-error'
+    : tone === 'warn' ? 'border-l-dark-warning'
+    : 'border-l-dark-border';
+  const heading =
+    tone === 'alarm' ? 'text-dark-error'
+    : tone === 'warn' ? 'text-dark-warning'
+    : 'text-dark-textMuted';
 
   return (
     <div className="card">
@@ -48,8 +57,13 @@ const ExceptionList = ({ title, items, tone, emptyText }) => {
                   <p className="text-xs text-dark-textMuted truncate">
                     {[c.category, c.location].filter(Boolean).join(' · ')}
                   </p>
+                  {c.projects?.length > 0 && (
+                    <p className="text-xs text-dark-textMuted truncate mt-0.5">
+                      for {c.projects.join(', ')}
+                    </p>
+                  )}
                 </div>
-                <QtyText qty={c.qty_on_hand} minQty={c.min_qty} />
+                <QtyText qty={c.qty_on_hand} minQty={c.min_qty} qtyOnOrder={c.qty_on_order} />
               </Link>
             </li>
           ))}
@@ -79,10 +93,21 @@ const Dashboard = () => {
   }
 
   const outOfStock = data?.out_of_stock || [];
+  const onOrder = data?.on_order || [];
   const lowStock = data?.low_stock || [];
   const pendingReview = data?.pending_review ?? 0;
   const recentOrders = data?.recent_orders || [];
   const ingest = data?.ingest || [];
+  // The routine "everything is fine" ingest panel is gone — mail now arrives at
+  // the dedicated mailbox, so per-account Gmail token chatter is not news.
+  // What must never be silent is a source that has STOPPED working: a dead
+  // Gmail token cost two days of orders in August and nobody noticed. So this
+  // surfaces on fault only — invisible when healthy, loud when not.
+  const ingestFaults = ingest.filter((src) =>
+    src.source === 'imap'
+      ? src.state !== 'ok'
+      : (src.token ?? src.token_status) !== 'ok' || !!src.last_error
+  );
   const totals = data?.totals || {};
 
   return (
@@ -131,11 +156,17 @@ const Dashboard = () => {
           tone="warn"
           emptyText="No components below minimum."
         />
+        <ExceptionList
+          title="On Order"
+          items={onOrder}
+          tone="muted"
+          emptyText="Nothing on order."
+        />
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Recent orders */}
-        <div className="card lg:col-span-2">
+      <div className={`grid gap-6 ${ingestFaults.length > 0 ? 'lg:grid-cols-3' : ''}`}>
+        {/* Recent orders — takes the full width when no fault card sits beside it */}
+        <div className={`card ${ingestFaults.length > 0 ? 'lg:col-span-2' : ''}`}>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Recent Orders</h2>
             <Link to="/orders" className="link text-sm">
@@ -176,37 +207,41 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* Gmail ingest / token status */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Email Ingest</h2>
-            <Link to="/settings" className="link text-sm">
-              Manage
-            </Link>
-          </div>
-          {ingest.length === 0 ? (
-            <p className="text-sm text-dark-textMuted">No Gmail accounts configured.</p>
-          ) : (
+        {/* Ingest health — rendered ONLY when a source is failing */}
+        {ingestFaults.length > 0 && (
+          <div className="card border-l-4 border-l-dark-error">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-dark-error">Ingest Fault</h2>
+              <Link to="/settings" className="link text-sm">
+                Manage
+              </Link>
+            </div>
             <ul className="space-y-3">
-              {ingest.map((acct, i) => (
-                <li key={acct.email || acct.account || i} className="p-3 bg-dark-elevated rounded">
+              {ingestFaults.map((src, i) => (
+                <li key={src.email || src.account || i} className="p-3 bg-dark-elevated rounded">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium truncate">
-                      {acct.email || acct.account || acct.user}
+                      {src.source === 'imap' ? 'mailbox: ' + src.user : src.email || src.account}
                     </p>
-                    <TokenStatus status={acct.token_status ?? acct.token} />
+                    <TokenStatus
+                      status={src.source === 'imap' ? src.state : src.token ?? src.token_status}
+                    />
                   </div>
-                  <p className="text-xs text-dark-textMuted mt-1">
-                    Last poll: {fmtDateTime(acct.last_poll)}
-                  </p>
-                  {acct.last_error && (
-                    <p className="text-xs text-dark-error mt-1 break-words">{acct.last_error}</p>
+                  {src.last_poll && (
+                    <p className="text-xs text-dark-textMuted mt-1">
+                      Last poll: {fmtDateTime(src.last_poll)}
+                    </p>
+                  )}
+                  {(src.last_error || src.error) && (
+                    <p className="text-xs text-dark-error mt-1 break-words">
+                      {src.last_error || src.error}
+                    </p>
                   )}
                 </li>
               ))}
             </ul>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

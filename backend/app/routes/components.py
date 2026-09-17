@@ -114,7 +114,15 @@ def list_components():
         query = query.filter(Component.qty_on_hand <= Component.min_qty)
 
     if request.args.get('out_of_stock') == '1':
+        # Parts already on an in-flight order are NOT "out of stock" for the
+        # purpose of this filter -- you have bought them, so they are not a
+        # shopping-list item. Pass include_on_order=1 to see them anyway.
         query = query.filter(Component.qty_on_hand <= 0)
+        if request.args.get('include_on_order') != '1':
+            query = query.filter(Component.qty_on_order <= 0)
+
+    if request.args.get('on_order') == '1':
+        query = query.filter(Component.qty_on_order > 0)
 
     return paginate_query(
         query, lambda c: c.to_dict(),

@@ -12,7 +12,7 @@ MODEL = os.getenv('PARTSBIN_CLAUDE_MODEL', 'claude-sonnet-5')
 MAX_BODY_CHARS = 24000
 
 VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland',
-           'jlcpcb', 'pololu')
+           'jlcpcb', 'pololu', 'ebay', 'polycase', 'onlinemetals', 'yakima')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
 # Vendors whose PAYMENT receipts may stand in for a missing order email.
@@ -27,15 +27,34 @@ EVENTS = ('ordered', 'shipped', 'delivered')
 # never once reached his Gmail (verified 2026-08-11 over all time), so without
 # this the orders are simply invisible.
 #
+# ebay: same situation, verified 2026-08-12 - from:ebay matches ZERO Gmail
+# messages over the past year because Don's eBay account is bound to his
+# Outlook address. The forwarded PayPal receipt is the only path, so without
+# this eBay purchases are invisible. Expect thin orders: eBay's receipts name
+# the merchant as the marketplace entity "eBay Commerce Inc." and itemise
+# nothing, so these land as a date + total with items=[] for Don to fill in.
+#
 # Do NOT add a vendor that already mails Gmail directly - Pololu and Adafruit
 # both do, and a payment receipt for one of those would create a SECOND order
 # under a different number for a purchase already recorded.
-PAYMENT_FALLBACK_VENDORS = ('seeed',)
+# jlcpcb: verified 2026-08-12. JLCPCB DOES mail Gmail, but never with an order
+# confirmation - across the whole account it sends only a signup code, marketing,
+# and "Order Review # ... Completed" status mail. A status email cannot create an
+# order (it only upgrades an existing one), so there is nothing here for a payment
+# receipt to duplicate and the guard above is satisfied.
+# Order W2026081221439587 (6 boards, .71, paid by PayPal via the Outlook
+# forward) was invisible in PartsBin because BOTH paths dead-ended: the receipt was
+# dropped right here, and the review email was dropped as a status-with-no-order.
+# Both got ProcessedMessage rows, so neither would EVER have been retried.
+# Expect thin orders - JLCPCB bills a build and the PayPal receipt itemises nothing.
+PAYMENT_FALLBACK_VENDORS = ('seeed', 'ebay', 'jlcpcb')
 
 SYSTEM_PROMPT = """You are a strict parser for vendor order emails feeding an \
 electronics inventory system. You receive one email (subject, sender, body) \
 from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio, Rokland, \
-Pololu (Robotics & Electronics) or JLCPCB (a PCB fabricator).
+Pololu (Robotics & Electronics), JLCPCB (a PCB fabricator), eBay, Polycase \
+(plastic and aluminium enclosures), OnlineMetals (cut-to-size metal and \
+plastic stock) or Yakima (roof-rack towers, crossbars and mounts).
 
 Respond with ONLY a single JSON object - no prose, no explanation, no markdown \
 fences. The schema is:
@@ -43,7 +62,8 @@ fences. The schema is:
 {
   "is_order": boolean,          // true only for order confirmation / shipment / delivery notices
   "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
-          | "rokland" | "jlcpcb" | "pololu" | "other",
+          | "rokland" | "jlcpcb" | "pololu" | "ebay" | "polycase" | "onlinemetals"
+          | "yakima" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
   "payment_derived": boolean,   // true only for a PAYMENT receipt (PayPal), not a seller email
   "order_no_source": "merchant" | "paypal" | null,   // where order_no came from
@@ -69,6 +89,18 @@ Rules:
   the real vendor is only visible in the forwarded body, subject or an
   "Original Message" block - read those before deciding. Getting this wrong
   files the order under "other", where it is invisible to the vendor filter.
+- MERCHANT ALIASES. Several vendors bill under a corporate name that shares no
+  words with the storefront. Map these to the vendor slug, wherever they
+  appear (From header, body, invoice header, or a payment receipt's merchant):
+  * "ThyssenKrupp Online Metals, LLC", "thyssenkrupp Online Metals",
+    "Thyssenkrupp Online", "thyssenkrupp Materials NA", "TKMNA", and the
+    2026-06-10 rebrand "tk accelis" / "tk accelis Materials Plus"
+    -> vendor "onlinemetals". OnlineMetals.com has been a thyssenkrupp company
+    since 2007 and is the ONLY thyssenkrupp entity PartsBin buys from.
+    Do NOT map any thyssenkrupp name to "polycase" - Polycase, Inc. (Avon,
+    Ohio, enclosures) is unrelated and independently owned.
+  * "Polycase, Inc." / "Polycase Inc" / "ECP" -> vendor "polycase".
+  * "Yakima Products, Inc." -> vendor "yakima".
 - order_date: the date the purchase was actually made. For a FORWARDED email
   this is the date on the ORIGINAL message ("Sent: August 9, 2026 5:33 PM" in
   the forwarded header), NOT the date it was forwarded, which may be days
@@ -85,6 +117,20 @@ Rules:
     when PayPal truncates them ("payment@seeedstudio....").
     Translate or transliterate a non-Latin merchant name before deciding, and
     treat the payment address as authoritative when the name is unclear.
+  * eBay pays through the marketplace entity, so the merchant on the receipt
+    reads "eBay Commerce Inc." (also "eBay Inc.", "eBay Marketplaces GmbH",
+    or a help address like https://eBay.com/help) -> vendor "ebay". The
+    actual seller is a third party the receipt never names; do NOT try to
+    guess one, and do not file it under "other" for lack of a seller.
+  * An eBay receipt's "Order ID" is a checkout id - a bare UUID
+    ("c4bda27b-f77b-4201-ad5c-31f0bb7810ff") or a versioned one
+    ("v2_7b29524f-...-5671c62ae6ea_2_6") - NOT an eBay order number, which
+    looks like "12-13456-78901". Use it as order_no so the order can be
+    deduplicated, but set order_no_source="paypal", never "merchant".
+  * eBay receipts itemise NOTHING. The block reading "Purchase amount /
+    Qty: 1 / $38.33" is the payment restated, not a line item - return
+    items=[]. There is no product title anywhere in that email; do not
+    invent one from the merchant name or the subject line.
   * Set payment_derived=true. This marks the order as reconstructed from a
     payment rather than from the seller, where line items are usually absent.
   * order_no: prefer the MERCHANT's own invoice/order number if the receipt
@@ -120,6 +166,29 @@ Rules:
 - JLCPCB non-board charges are NOT components: engineering/setup fees, stencil
   fees, shipping, customs/tax, coupons and discounts -> is_component=false.
   They still count toward the order total.
+- Polycase sells ENCLOSURES. The enclosure itself is inventory
+  (is_component=true), and so are its accessories that get stocked: lids,
+  gaskets, mounting flanges, DIN clips, screw packs. Its CUSTOMISATION and
+  service charges are NOT components: CNC machining, cutouts, digital
+  printing, silkscreen, tooling/setup fees, artwork or proof charges,
+  shipping, tax -> is_component=false. They still count toward the total.
+  A colour/size variant in the title is a variant, never a kit.
+- OnlineMetals sells RAW STOCK cut to size (aluminium/brass/steel/acrylic/
+  Delrin sheet, plate, bar, rod, tube, angle). A stock line IS inventory:
+  is_component=true, is_kit=false, qty = number of PIECES ordered, and keep
+  the alloy, temper, profile and the cut dimensions in the title verbatim
+  ("6061-T6 Aluminum Sheet 0.125\" x 6\" x 12\"") - those dimensions are the
+  part identity and a later order of the same alloy in a different size is a
+  DIFFERENT component. Its per-cut charges are NOT components: cutting/saw
+  fees, tolerance or squaring charges, drop/remnant fees, handling, shipping,
+  fuel surcharge, tax -> is_component=false.
+- Yakima sells ROOF-RACK hardware. Towers, crossbars, landing pads, fit
+  kits, clips, locks, cores, mounts and their fasteners are inventory
+  (is_component=true) - keep the model/part name and any bar length in the
+  title, since a fit kit is vehicle-specific and two lengths of the same bar
+  are different components. Vehicle-fit lookups, warranty registrations,
+  assembly service, shipping and tax -> is_component=false. A "fit kit"
+  containing brackets for ONE vehicle is not an assortment: is_kit=false.
 - units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
   1 when unclear. Do NOT multiply it into qty - report them separately.
 - is_component: true for anything that belongs in an electronics/maker
@@ -312,7 +381,8 @@ def parse_order_email(subject, sender, body):
 
 COMPONENT_SYSTEM_PROMPT = """You turn raw vendor order-item titles into clean \
 component definitions for an electronics inventory. You receive a numbered list \
-of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland/Pololu/JLCPCB \
+of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland/Pololu/JLCPCB/eBay/\
+Polycase/OnlineMetals/Yakima \
 orders) and a \
 list of allowed categories.
 

@@ -55,7 +55,7 @@ const ComponentPicker = ({ onSelect, onClose, title = 'Select Component' }) => {
                   {[c.category, c.mpn, c.location].filter(Boolean).join(' · ')}
                 </p>
               </div>
-              <QtyText qty={c.qty_on_hand} minQty={c.min_qty} suffix=" on hand" />
+              <QtyText qty={c.qty_on_hand} minQty={c.min_qty} qtyOnOrder={c.qty_on_order} suffix=" on hand" />
             </button>
           ))}
         </div>

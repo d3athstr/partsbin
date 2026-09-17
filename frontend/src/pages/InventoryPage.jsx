@@ -314,7 +314,7 @@ const InventoryPage = () => {
                       </div>
                     </td>
                     <td className="py-2.5 px-3 text-right">
-                      <QtyText qty={c.qty_on_hand} minQty={c.min_qty} />
+                      <QtyText qty={c.qty_on_hand} minQty={c.min_qty} qtyOnOrder={c.qty_on_order} />
                       {c.min_qty > 0 && (
                         <span className="text-xs text-dark-textMuted"> / {c.min_qty}</span>
                       )}

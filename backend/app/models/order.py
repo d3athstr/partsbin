@@ -3,7 +3,8 @@ from app import db
 from .component import JSONType
 
 ORDER_VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed',
-                 'rokland', 'jlcpcb', 'pololu', 'other')
+                 'rokland', 'jlcpcb', 'pololu', 'ebay', 'polycase', 'onlinemetals',
+                 'yakima', 'other')
 # 'ignored' ranks last so a later shipped/delivered email never resurrects
 # an order the user discarded (ingest only upgrades status by rank).
 ORDER_STATUSES = ('ordered', 'shipped', 'delivered', 'received', 'ignored')

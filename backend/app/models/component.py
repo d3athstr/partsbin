@@ -76,9 +76,18 @@ class Component(db.Model):
 
     @property
     def stock_status(self):
-        """ISA-101 style exception status: out / low / ok"""
+        """ISA-101 style exception status: out / on_order / low / ok
+
+        'on_order' exists so a part you have already bought stops shouting at
+        you as an exception. Nothing is on the shelf, but nothing is wrong
+        either -- the operator has already acted, and an alarm you cannot act
+        on again is noise. It ranks BELOW 'out' and above 'low': still zero on
+        hand, but no decision is owed.
+
+        qty_on_order is a column_property defined in app/models/__init__.py.
+        """
         if (self.qty_on_hand or 0) <= 0:
-            return 'out'
+            return 'on_order' if (self.qty_on_order or 0) > 0 else 'out'
         if self.qty_on_hand <= (self.min_qty or 0):
             return 'low'
         return 'ok'
@@ -123,6 +132,7 @@ class Component(db.Model):
             'mpn': self.mpn,
             'manufacturer': self.manufacturer,
             'qty_on_hand': self.qty_on_hand,
+            'qty_on_order': int(self.qty_on_order or 0),
             'min_qty': self.min_qty,
             'location': self.location,
             'image': self.image,
@@ -145,6 +155,7 @@ class Component(db.Model):
             'mpn': self.mpn,
             'description': self.description,
             'qty_on_hand': self.qty_on_hand,
+            'qty_on_order': int(self.qty_on_order or 0),
             'min_qty': self.min_qty,
             'location': self.location,
             'datasheet_url': self.datasheet_url,
