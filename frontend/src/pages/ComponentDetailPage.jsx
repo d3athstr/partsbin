@@ -556,6 +556,28 @@ const ComponentDetailPage = () => {
               )}
             </div>
 
+            {/* Assembly access hazard. Amber, not gray: this is the thing you
+                need to have read BEFORE the iron is hot, and by the time it
+                matters the part is already soldered down. */}
+            {(component.access_tags?.length > 0 || component.assembly_notes) && (
+              <div className="alert-warn mt-4 text-sm">
+                <p className="font-semibold">Assembly access</p>
+                {component.assembly_notes && (
+                  <p className="mt-1 whitespace-pre-wrap">{component.assembly_notes}</p>
+                )}
+                {component.access_tags?.length > 0 && (
+                  <p className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs opacity-70">hides</span>
+                    {component.access_tags.map((t) => (
+                      <span key={t} className="chip-warn">
+                        {t}
+                      </span>
+                    ))}
+                  </p>
+                )}
+              </div>
+            )}
+
             {component.notes && (
               <div className="mt-4 p-3 bg-dark-elevated rounded text-sm text-dark-textMuted whitespace-pre-wrap">
                 {component.notes}

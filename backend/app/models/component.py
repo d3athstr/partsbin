@@ -58,6 +58,22 @@ class Component(db.Model):
     image = db.Column(db.String(500), nullable=True)  # relative path under uploads/
     notes = db.Column(db.Text, nullable=True)
 
+    # ---- Assembly access hazards -------------------------------------------
+    # Recorded once on the PART, not on each project, because the hazard is a
+    # property of the part: a XIAO's BAT+/BAT- pads are on its underside on
+    # every board it is ever soldered to. Projects whose BOM includes the part
+    # inherit the warning automatically, including projects with no assembly
+    # steps written yet.
+    #
+    # access_tags names the contacts that become unreachable once the part is
+    # mounted (['xiao-underside']); assembly_notes is the human sentence that
+    # says what to do about it. Tags are normalised by
+    # app.services.assembly_service.normalise_tags before they are stored, so
+    # the project-level order check can compare them exactly rather than
+    # fuzzily - see the kit-breakout fuzzy-match collision for why exact.
+    access_tags = db.Column(JSONType, nullable=True)   # list[str]
+    assembly_notes = db.Column(db.Text, nullable=True)
+
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -141,6 +157,8 @@ class Component(db.Model):
             'product_url': self.product_url,
             'product_vendor': self.product_vendor,
             'product_sku': self.product_sku,
+            'access_tags': self.access_tags or [],
+            'assembly_notes': self.assembly_notes,
             **self._cost_fields(),
         }
 
@@ -165,6 +183,8 @@ class Component(db.Model):
             'image': self.image,
             'image_url': f'/uploads/{self.image}' if self.image else None,
             'notes': self.notes,
+            'access_tags': self.access_tags or [],
+            'assembly_notes': self.assembly_notes,
             'stock_status': self.stock_status,
             **self._cost_fields(),
             'est_cost_source': self.est_cost_source,

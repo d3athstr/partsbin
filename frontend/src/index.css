@@ -83,6 +83,10 @@
     @apply bg-dark-error bg-opacity-10 border border-dark-error text-dark-error px-4 py-3 rounded-lg;
   }
 
+  .alert-warn {
+    @apply bg-dark-warning bg-opacity-10 border border-dark-warning text-dark-warning px-4 py-3 rounded-lg;
+  }
+
   .alert-info {
     @apply bg-dark-elevated border border-dark-border text-dark-text px-4 py-3 rounded-lg;
   }

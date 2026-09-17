@@ -62,6 +62,38 @@ const projectService = {
     return response.data;
   },
 
+  // ==================== Assembly order ====================
+  //
+  // Every one of these returns the re-checked assembly report, not just the
+  // step that changed: moving or editing a step is exactly what creates or
+  // clears an access conflict, so the caller is always handed the new verdict.
+
+  getAssembly: async (projectId) => {
+    const response = await api.get(`/projects/${projectId}/assembly`);
+    return response.data;
+  },
+
+  addAssemblyStep: async (projectId, data) => {
+    const response = await api.post(`/projects/${projectId}/assembly`, data);
+    return response.data;
+  },
+
+  updateAssemblyStep: async (projectId, stepId, data) => {
+    const response = await api.put(`/projects/${projectId}/assembly/${stepId}`, data);
+    return response.data;
+  },
+
+  deleteAssemblyStep: async (projectId, stepId) => {
+    const response = await api.delete(`/projects/${projectId}/assembly/${stepId}`);
+    return response.data;
+  },
+
+  /** order: the complete list of step ids in their new order. */
+  reorderAssembly: async (projectId, order) => {
+    const response = await api.post(`/projects/${projectId}/assembly/reorder`, { order });
+    return response.data;
+  },
+
   // ==================== Files ====================
 
   uploadFile: async (projectId, file, kind = 'other') => {

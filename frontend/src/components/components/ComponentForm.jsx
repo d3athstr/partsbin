@@ -39,6 +39,8 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
   const [productVendor, setProductVendor] = useState(initial.product_vendor || '');
   const [productSku, setProductSku] = useState(initial.product_sku || '');
   const [notes, setNotes] = useState(initial.notes || '');
+  const [accessTags, setAccessTags] = useState((initial.access_tags || []).join(', '));
+  const [assemblyNotes, setAssemblyNotes] = useState(initial.assembly_notes || '');
   const [specRows, setSpecRows] = useState(() => {
     const entries = Object.entries(initial.specs || {});
     return entries.length > 0
@@ -124,6 +126,10 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
       product_vendor: productVendor.trim() || null,
       product_sku: productSku.trim() || null,
       notes: notes.trim() || null,
+      // Sent as typed; the backend normalises to slugs, because these are
+      // compared by exact equality against project assembly steps.
+      access_tags: accessTags,
+      assembly_notes: assemblyNotes.trim() || null,
       tags: selectedTags,
     };
 
@@ -412,6 +418,46 @@ const ComponentForm = ({ initial = {}, onSubmit, submitLabel = 'Save', busy = fa
         {imageFile && (
           <p className="text-xs text-dark-textMuted">Selected: {imageFile.name}</p>
         )}
+      </div>
+
+      {/* Assembly access hazard — recorded on the PART, because that is where
+          it belongs: a XIAO hides its BAT pads on every board it is ever
+          soldered to. Every project whose BOM lists this part inherits the
+          warning, including ones whose steps were written without it in mind. */}
+      <div className="card space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Assembly Access</h2>
+          <p className="text-sm text-dark-textMuted mt-1">
+            Contacts on this part that become unreachable once it is mounted. Projects using
+            it will warn if their assembly order never gets to them.
+          </p>
+        </div>
+        <label className="block">
+          <span className="text-xs text-dark-textMuted uppercase tracking-wide">
+            Hidden contacts
+          </span>
+          <input
+            value={accessTags}
+            onChange={(e) => setAccessTags(e.target.value)}
+            className="input w-full mt-1 font-mono text-sm"
+            placeholder="xiao-underside, bat-pads"
+          />
+          <span className="text-xs text-dark-textMuted">
+            Comma separated. Assembly steps use the same names.
+          </span>
+        </label>
+        <label className="block">
+          <span className="text-xs text-dark-textMuted uppercase tracking-wide">
+            What to do about it
+          </span>
+          <textarea
+            value={assemblyNotes}
+            onChange={(e) => setAssemblyNotes(e.target.value)}
+            className="input w-full mt-1 font-mono text-sm"
+            rows={3}
+            placeholder="BAT+/BAT- are on the underside — solder the battery leads before mounting the module."
+          />
+        </label>
       </div>
 
       {/* Notes */}

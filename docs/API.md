@@ -35,6 +35,17 @@ POST /api/projects {name, status, description, readme_md, repo_url, tags[]}
 PUT /api/projects/<id> ; DELETE /api/projects/<id>
 POST /api/projects/<id>/bom {component_id, qty_planned, note} ; PUT/DELETE /api/projects/<id>/bom/<line_id>
 POST /api/projects/<id>/bom/<line_id>/consume {qty}       # decrements stock (project_use txn)
+GET  /api/projects/<id>/assembly  → {steps, conflicts, hazards, status, step_count,
+                                     steps_done, unaddressed_hazard_count}
+POST /api/projects/<id>/assembly {title, body_md, component_id, needs_access, obstructs, seq}
+PUT  /api/projects/<id>/assembly/<step_id> {…, done}   ; DELETE /api/projects/<id>/assembly/<step_id>
+POST /api/projects/<id>/assembly/reorder {order: [step_id, …]}   # every step, exactly once
+#   Mutating endpoints return {step, assembly} — the re-checked order, never a bare
+#   step: moving or editing a step is what creates or clears a conflict.
+#   needs_access / obstructs accept a list or a comma-separated string; both are
+#   slugged ("XIAO Underside" → "xiao-underside") and compared by EXACT equality.
+#   status: conflict | warning | ok | none
+
 POST /api/projects/<id>/files (multipart, kind=image|pdf|schematic|firmware|model3d|other)
   # kind=model3d: validated by EXTENSION (.stl .3mf .obj .step .stp .scad .gcode .bgcode .f3d),
   # cap 64MB (MAX_MODEL_SIZE) vs 50MB for other kinds. Meshes all sniff as octet-stream /

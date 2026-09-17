@@ -7,6 +7,7 @@ import projectService from '../services/projectService';
 import { errMsg } from '../services/api';
 import ComponentPicker from '../components/common/ComponentPicker';
 import ProjectModels from '../components/projects/ProjectModels';
+import ProjectAssembly from '../components/projects/ProjectAssembly';
 import { fmtDate, fmtMoney, fmtUnitMoney, fmtVariance } from '../utils/format';
 import { productRefLabel } from '../utils/vendors';
 
@@ -144,6 +145,7 @@ const ProjectDetailPage = () => {
   const project = data?.project || data || {};
   const bom = data?.bom || project.bom || [];
   const files = data?.files || project.files || [];
+  const assembly = data?.assembly || project.assembly || null;
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['project', id] });
@@ -165,6 +167,40 @@ const ProjectDetailPage = () => {
     mutationFn: (lineId) => projectService.deleteBomLine(id, lineId),
     onSuccess: () => invalidate(),
     onError: (err) => setActionError(errMsg(err, 'Failed to remove BOM line')),
+  });
+
+  // Assembly-order mutations. Every one of them invalidates the project rather
+  // than patching a step in place: the server re-runs the access check on the
+  // whole order after each change, and a stale local copy would show a
+  // conflict that no longer exists (or hide one that now does).
+  const addStepMutation = useMutation({
+    mutationFn: (payload) => projectService.addAssemblyStep(id, payload),
+    onSuccess: () => {
+      invalidate();
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Failed to add assembly step')),
+  });
+
+  const updateStepMutation = useMutation({
+    mutationFn: ({ stepId, payload }) => projectService.updateAssemblyStep(id, stepId, payload),
+    onSuccess: () => {
+      invalidate();
+      setActionError('');
+    },
+    onError: (err) => setActionError(errMsg(err, 'Failed to update assembly step')),
+  });
+
+  const deleteStepMutation = useMutation({
+    mutationFn: (stepId) => projectService.deleteAssemblyStep(id, stepId),
+    onSuccess: () => invalidate(),
+    onError: (err) => setActionError(errMsg(err, 'Failed to remove assembly step')),
+  });
+
+  const reorderStepsMutation = useMutation({
+    mutationFn: (order) => projectService.reorderAssembly(id, order),
+    onSuccess: () => invalidate(),
+    onError: (err) => setActionError(errMsg(err, 'Failed to reorder assembly steps')),
   });
 
   const priceMutation = useMutation({
@@ -541,6 +577,22 @@ const ProjectDetailPage = () => {
           </div>
         )}
       </div>
+
+      {/* Assembly order — after the BOM (you need the parts list to read it)
+          and before the prose, because it is the thing you follow at the bench. */}
+      <ProjectAssembly
+        assembly={assembly}
+        busy={
+          addStepMutation.isPending ||
+          updateStepMutation.isPending ||
+          deleteStepMutation.isPending ||
+          reorderStepsMutation.isPending
+        }
+        onAdd={(payload) => addStepMutation.mutate(payload)}
+        onUpdate={(stepId, payload) => updateStepMutation.mutate({ stepId, payload })}
+        onDelete={(stepId) => deleteStepMutation.mutate(stepId)}
+        onReorder={(order) => reorderStepsMutation.mutate(order)}
+      />
 
       {/* Documentation */}
       <div className="card">

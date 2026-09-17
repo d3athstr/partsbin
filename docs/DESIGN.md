@@ -25,7 +25,8 @@ Sister app to Garment Gallery (GarmentGallery2) — same architecture, auth, and
   qty_on_hand, min_qty (low-stock threshold), location (bin/drawer label), datasheet_url,
   product_url / product_vendor / product_sku (canonical "buy it here" vendor reference —
   surfaced as a Buy link on the component and, via to_summary(), in every BOM line),
-  image upload, tags (m2m), notes.
+  image upload, tags (m2m), notes, access_tags + assembly_notes (assembly access hazard —
+  see below).
 - **StockTransaction**: component_id, delta, reason (initial | order_received | project_use |
   adjustment), ref order_item/project, note, user, timestamp. `qty_on_hand` only changes via
   transactions (auditable history).
@@ -33,6 +34,37 @@ Sister app to Garment Gallery (GarmentGallery2) — same architecture, auth, and
   markdown documentation), repo_url, tags, files (images / PDFs / schematics / firmware),
   BOM = ProjectComponent(component, qty_planned, qty_used, note). "Consume" action decrements
   stock via transactions. Availability check flags BOM lines short on stock.
+- **ProjectAssemblyStep**: project_id, seq (normalised 1..N on every mutation — no unique
+  constraint, so a reorder is one pass with no temporary values), title, body_md, optional
+  component_id, `obstructs` + `needs_access` (JSONB tag lists), done/done_at.
+
+### Assembly access checking
+
+The failure this models is mechanical, not electrical: solder a XIAO flat onto its carrier
+and the BAT+/BAT- pads on its underside are gone — the board works, the battery can never be
+attached, and neither the schematic nor the BOM said so. Prose in a readme cannot stop that,
+because it is only read after the fact.
+
+So each step declares what must still be reachable to perform it (`needs_access`) and what it
+puts out of reach (`obstructs`), and `app/services/assembly_service.py` walks the steps in
+order: a step needing a tag an earlier step obstructed is a **conflict**, reported with both
+step numbers. A step may obstruct what it used ("mount the XIAO" both needs and hides
+`xiao-underside`) — its own obstructs apply only after its needs are checked.
+
+The second half of the check lives on the **component**: `access_tags` / `assembly_notes`
+record the hazard once, on the part, because that is where it is true — a XIAO hides its BAT
+pads on every carrier it will ever be soldered to. Any project whose BOM includes the part
+inherits the warning, including a project whose steps were written without it in mind, which
+is the case a conflict scan alone cannot see.
+
+Tags are slugged (`XIAO Underside` → `xiao-underside`) and compared by **exact equality**,
+deliberately: the kit-breakout incident (24 capacitor values fuzzy-matched onto one component
+because they shared a name suffix) is why nothing here matches fuzzily. An unmatched tag is
+visible — it reports as an unaddressed hazard; a mis-matched one would not be.
+
+`status` is the ISA-101 exception level: `conflict` (red) / `warning` (amber, an unaddressed
+hazard or no order at all) / `ok` (gray) / `none`. There is no green "checks passed" state —
+a correct assembly order is normal and does not warrant colour.
 - **Order**: vendor (amazon/aliexpress/adafruit/mouser/digikey/seeed/other), vendor_order_no, status
   (ordered → shipped → delivered → received), order_date, tracking_no/carrier/url, gmail_account,
   gmail_message_ids, raw_subject, total.

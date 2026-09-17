@@ -1,6 +1,11 @@
 from datetime import datetime
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import joinedload
 from app import db
+
+# JSON column that uses JSONB on Postgres and plain JSON (TEXT) on sqlite
+JSONType = JSON().with_variant(JSONB(), 'postgresql')
 
 PROJECT_STATUSES = ('planning', 'active', 'built', 'on_hold', 'retired')
 PROJECT_FILE_KINDS = ('image', 'pdf', 'schematic', 'firmware', 'model3d', 'other')
@@ -29,6 +34,10 @@ class Project(db.Model):
                           cascade='all, delete-orphan')
     files = db.relationship('ProjectFile', backref='project', lazy='dynamic',
                             cascade='all, delete-orphan')
+    assembly_steps = db.relationship(
+        'ProjectAssemblyStep', backref='project', lazy='dynamic',
+        cascade='all, delete-orphan',
+        order_by='ProjectAssemblyStep.seq, ProjectAssemblyStep.id')
 
     def __repr__(self):
         return f'<Project {self.name}>'
@@ -59,14 +68,20 @@ class Project(db.Model):
             'tags': [t.to_dict() for t in self.tags],
             'bom_count': len(lines),
             'file_count': self.files.count(),
+            'assembly_step_count': self.assembly_steps.count(),
             'cost': project_cost_summary(line_dicts),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
         if include_detail:
+            from app.services.assembly_service import assembly_report
+
             data['readme_md'] = self.readme_md
             data['bom'] = line_dicts
             data['files'] = [f.to_dict() for f in self.files]
+            # Served with the project, not behind its own fetch: an assembly
+            # order you have to click to see is one you assemble without.
+            data['assembly'] = assembly_report(self.assembly_steps.all(), lines)
         return data
 
 
@@ -140,4 +155,66 @@ class ProjectFile(db.Model):
             'mime_type': self.mime_type,
             'size': self.size,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ProjectAssemblyStep(db.Model):
+    """One step of a project's solder/assembly order.
+
+    Ordered by seq (normalised to 1..N by assembly_service.resequence on every
+    mutation - there is deliberately no unique constraint on (project_id, seq),
+    so a reorder is a single pass with no temporary values).
+
+    obstructs / needs_access are the machine-checkable half of the step. They
+    are what lets PartsBin say "step 4 needs the XIAO underside and step 3
+    covered it" instead of leaving that to whoever is holding the iron. See
+    app/services/assembly_service.py.
+    """
+    __tablename__ = 'project_assembly_step'
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('project.id'), nullable=False, index=True)
+    seq = db.Column(db.Integer, nullable=False, default=1)
+
+    title = db.Column(db.String(200), nullable=False)
+    body_md = db.Column(db.Text, nullable=True)  # rendered as markdown in the UI
+
+    # The part this step attaches, when there is one. Optional: plenty of steps
+    # ('flux and tin the pads', 'test fit before soldering anything') attach
+    # nothing, and forcing a component on them would push people to skip them.
+    component_id = db.Column(db.Integer, db.ForeignKey('component.id'), nullable=True, index=True)
+
+    obstructs = db.Column(JSONType, nullable=True)      # list[str]
+    needs_access = db.Column(JSONType, nullable=True)   # list[str]
+
+    # Bench state while working through a build. Cleared per build by hand -
+    # PartsBin tracks one assembly order per project, not one per unit.
+    done = db.Column(db.Boolean, nullable=False, default=False)
+    done_at = db.Column(db.DateTime, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    component = db.relationship('Component',
+                                backref=db.backref('assembly_steps', lazy='dynamic'))
+
+    def __repr__(self):
+        return f'<ProjectAssemblyStep {self.project_id}.{self.seq} {self.title!r}>'
+
+    def to_dict(self):
+        """Convert an assembly step to a dictionary"""
+        return {
+            'id': self.id,
+            'project_id': self.project_id,
+            'seq': self.seq,
+            'title': self.title,
+            'body_md': self.body_md,
+            'component_id': self.component_id,
+            'component': self.component.to_summary() if self.component else None,
+            'obstructs': self.obstructs or [],
+            'needs_access': self.needs_access or [],
+            'done': bool(self.done),
+            'done_at': self.done_at.isoformat() if self.done_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

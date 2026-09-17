@@ -8,6 +8,7 @@ from app.models.tag import Tag
 from app.services.file_service import FileService
 from app.services.stock_service import adjust_stock, InsufficientStockError
 from app.services import cost_service
+from app.services.assembly_service import normalise_tags
 from app.routes import paginate_query, parse_money
 
 components_bp = Blueprint('components', __name__)
@@ -54,6 +55,16 @@ def _set_fields(component, data):
         if field in data:
             value = data[field]
             setattr(component, field, value.strip() if isinstance(value, str) else value)
+
+    if 'assembly_notes' in data:
+        component.assembly_notes = data['assembly_notes'] or None
+
+    # Normalised here rather than trusted as typed: these tags are compared by
+    # exact equality against a project's assembly steps, so 'XIAO Underside'
+    # and 'xiao-underside' have to become the same string or the order check
+    # silently sees no hazard at all.
+    if 'access_tags' in data:
+        component.access_tags = normalise_tags(data['access_tags'])
 
     if 'specs' in data:
         specs = data['specs']
