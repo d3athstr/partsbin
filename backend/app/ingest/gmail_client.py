@@ -86,7 +86,7 @@ GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
     'OR seeed.cc OR seeedstudio.com OR rokland.com OR jlcpcb.com OR pololu.com '
     'OR ebay.com OR polycase.com OR onlinemetals.com OR yakima.com '
-    'OR eletechsup.com OR 485io.com OR coldandcolder.com '
+    'OR eletechsup.com OR 485io.com OR coldandcolder.com OR ti.com '
     'OR paypal.com' + (f' OR {FORWARD_ADDRESS}' if FORWARD_ADDRESS else '') + ') '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail

@@ -20,7 +20,7 @@ from app.ingest.enrich import web_call
 KIT_SYSTEM = """You determine the exact contents of an electronics assortment \
 kit for an inventory system. You receive the raw order-item title of a kit \
 (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland/Pololu/JLCPCB/eBay/Polycase/\
-OnlineMetals/Yakima/Eletechsup/Cold & Colder) and a list of allowed \
+OnlineMetals/Yakima/Eletechsup/Cold & Colder/Texas Instruments) and a list of allowed \
 inventory categories.
 
 Use web search to find the EXACT product listing, then extract the per-part

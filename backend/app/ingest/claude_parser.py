@@ -13,7 +13,7 @@ MAX_BODY_CHARS = 24000
 
 VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland',
            'jlcpcb', 'pololu', 'ebay', 'polycase', 'onlinemetals', 'yakima',
-           'eletechsup', 'coldandcolder')
+           'eletechsup', 'coldandcolder', 'ti')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
 # Vendors whose PAYMENT receipts may stand in for a missing order email.
@@ -57,7 +57,9 @@ Pololu (Robotics & Electronics), JLCPCB (a PCB fabricator), eBay, Polycase \
 (plastic and aluminium enclosures), OnlineMetals (cut-to-size metal and \
 plastic stock), Yakima (roof-rack towers, crossbars and mounts), Eletechsup \
 (RS485/Modbus relay and I/O boards, DIN-rail control modules) or Cold & Colder \
-(silicone tubing, Peltier/thermoelectric cooling parts and water-cooling gear).
+(silicone tubing, Peltier/thermoelectric cooling parts and water-cooling gear) \
+or the Texas Instruments TI.com store (TI's own ICs, evaluation modules and \
+LaunchPad boards).
 
 Respond with ONLY a single JSON object - no prose, no explanation, no markdown \
 fences. The schema is:
@@ -66,7 +68,7 @@ fences. The schema is:
   "is_order": boolean,          // true only for order confirmation / shipment / delivery notices
   "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
           | "rokland" | "jlcpcb" | "pololu" | "ebay" | "polycase" | "onlinemetals"
-          | "yakima" | "eletechsup" | "coldandcolder" | "other",
+          | "yakima" | "eletechsup" | "coldandcolder" | "ti" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
   "payment_derived": boolean,   // true only for a PAYMENT receipt (PayPal), not a seller email
   "order_no_source": "merchant" | "paypal" | null,   // where order_no came from
@@ -111,6 +113,15 @@ Rules:
     storefront, not a separate vendor.
   * "Cold & Colder", "Cold and Colder", "ColdandColder", "Cold & Colder LLC"
     (Sheridan, Wyoming) -> vendor "coldandcolder".
+  * "Texas Instruments", "Texas Instruments Incorporated", "TI", "TI Store",
+    "TI.com" and any ti.com sending address -> vendor "ti".
+  * "Digi-Key", "Digi-Key Electronics", "Digi-Key Corporation", "DigiKey",
+    and any digikey.com address (orders@t.digikey.com) -> vendor "digikey".
+- TEXAS INSTRUMENTS IS A BRAND ON EVERY DISTRIBUTOR. Most TI parts are bought
+  from DigiKey, Mouser, Amazon or AliExpress, and those orders keep THAT
+  vendor - a DigiKey order full of TI chips is vendor "digikey". Only an order
+  placed on TI's own store (ti.com, "TI Store", "Texas Instruments" order
+  confirmation or shipment notice) is vendor "ti".
 - BRAND IS NOT VENDOR ON A MARKETPLACE. Eletechsup and Cold & Colder also sell
   through Amazon, eBay, AliExpress and Etsy storefronts. The vendor is where
   the ORDER WAS PLACED, not whose product it is: an Amazon confirmation that
@@ -230,6 +241,33 @@ Rules:
   (block + pump + radiator + tubing) is a single product, is_kit=false - it
   is not an assortment of varying values to be stocked separately. Shipping
   and tax -> is_component=false.
+- DigiKey: order_no is the SALES ORDER number ("Your salesorder number is
+  12345678", "Sales order number: 12345678"). A DigiKey shipment notice ALSO
+  carries an INVOICE number, and puts it in the SUBJECT ("DigiKey has shipped
+  a package for invoice 987654321") - the invoice number is NEVER order_no;
+  using it files the shipment as a second, duplicate order. One sales order
+  can ship as several invoices. A line item shows a description, a DigiKey
+  part number ("296-25616-1-ND") and a Manufacturer part number
+  ("TPS63020DSJR"):
+  title = the description followed by "(MPN <manufacturer part number>,
+  DigiKey <digikey part number>)", e.g. "IC REG BUCK BOOST ADJ 4A 14VSON
+  (MPN TPS63020DSJR, DigiKey 296-25616-1-ND)" - the MPN is the part identity, the
+  description alone is too terse to match. Use the "Unit price" field as
+  unit_price. Shipping, tax, tariff, Digi-Reel/reeling fees and "Backorder"
+  rows are NOT items; reeling fees still count toward the total. A part sold
+  as Cut Tape / Tape & Reel / Digi-Reel is still qty = PIECES with
+  units_per_item=1. A shipment notice that lists no line items -> items=[].
+- Texas Instruments (vendor "ti") sells its own ICs, evaluation modules (EVMs)
+  and LaunchPad / BoosterPack dev boards. All are inventory
+  (is_component=true). Keep TI's ORDERABLE part number verbatim in the title
+  ("TPS63020DSJR", "LP-MSPM0G3507", "BQ25895RTWR") together with any
+  description the email gives: the package and reel suffix (DSJR vs DSJT, RGER
+  vs RGET) is part of the identity, so do not trim or normalise it. qty =
+  PIECES (TI ships cut tape and tubes, not packs), units_per_item=1 unless the
+  line says otherwise. An EVM or LaunchPad is ONE product, is_kit=false. Free
+  samples are real items: keep them with unit_price 0. Shipping, handling,
+  tax and export-compliance lines -> is_component=false. order_no is TI's
+  order number as printed, verbatim.
 - units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
   1 when unclear. Do NOT multiply it into qty - report them separately.
 - is_component: true for anything that belongs in an electronics/maker
@@ -424,7 +462,7 @@ def parse_order_email(subject, sender, body):
 COMPONENT_SYSTEM_PROMPT = """You turn raw vendor order-item titles into clean \
 component definitions for an electronics inventory. You receive a numbered list \
 of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland/Pololu/JLCPCB/eBay/\
-Polycase/OnlineMetals/Yakima/Eletechsup/Cold & Colder \
+Polycase/OnlineMetals/Yakima/Eletechsup/Cold & Colder/Texas Instruments \
 orders) and a \
 list of allowed categories.
 
