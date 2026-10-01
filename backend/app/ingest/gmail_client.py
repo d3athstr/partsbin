@@ -47,7 +47,9 @@ FORWARD_ADDRESS = os.getenv('INGEST_FORWARD_ADDRESS', '').strip()
 # 2026-07-14, trashed within 18 min of arrival. Trash retains 30 days, well
 # past the 14d lookback. Spam stays excluded: spoofed-From phishing there would
 # otherwise reach the parser.
-# paypal.com: PAYMENT receipts, a deliberate fallback for Seeed only
+# paypal.com: REMOVED from the query 2026-10-01 - payment receipts are no longer
+# ingested at all (claude_parser.PAYMENT_FALLBACK_VENDORS is empty). History:
+# PAYMENT receipts, a deliberate fallback for Seeed only
 # (2026-08-11). Seeed mail reaches the secondary mailbox and never Gmail, so a
 # forwarded PayPal receipt is the only way those purchases become orders. The
 # parser gates this on claude_parser.PAYMENT_FALLBACK_VENDORS: a receipt for
@@ -87,7 +89,7 @@ GMAIL_QUERY_BASE = (
     'OR seeed.cc OR seeedstudio.com OR rokland.com OR jlcpcb.com OR pololu.com '
     'OR ebay.com OR polycase.com OR onlinemetals.com OR yakima.com '
     'OR eletechsup.com OR 485io.com OR coldandcolder.com OR ti.com '
-    'OR paypal.com' + (f' OR {FORWARD_ADDRESS}' if FORWARD_ADDRESS else '') + ') '
+    '' + (f' OR {FORWARD_ADDRESS}' if FORWARD_ADDRESS else '') + ') '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail
 )

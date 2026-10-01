@@ -30,8 +30,12 @@ __all__ = [
 # and can also be used directly in filters, which the dashboard needs.
 #
 # Counts CONFIRMED matches only, on orders still in flight ('ordered' /
-# 'shipped'). A 'received' order has already moved its stock into qty_on_hand,
-# so counting it here would double it; 'ignored'/'discarded' never arrive.
+# 'shipped' / 'delivered'). A 'received' order has already moved its stock into
+# qty_on_hand, so counting it here would double it; 'ignored'/'discarded' never
+# arrive. 'delivered' added 2026-10-01 (Don): a delivered-but-not-yet-received
+# order is not in qty_on_hand either, and without it those parts popped back
+# onto the dashboard's Out of Stock list - which must mean "genuinely needs
+# ordering" - in the gap between the box arriving and receiving it.
 # ---------------------------------------------------------------------------
 from sqlalchemy import select, func as _func  # noqa: E402
 
@@ -40,7 +44,7 @@ Component.qty_on_order = db.column_property(
     .where(OrderItem.component_id == Component.id)
     .where(OrderItem.match_status == 'confirmed')
     .where(OrderItem.order_id == Order.id)
-    .where(Order.status.in_(('ordered', 'shipped')))
+    .where(Order.status.in_(('ordered', 'shipped', 'delivered')))
     .correlate_except(OrderItem, Order)
     .scalar_subquery(),
     deferred=False,

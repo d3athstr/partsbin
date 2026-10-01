@@ -306,6 +306,8 @@ def _upsert_order(account, message, parsed):
         ):
             order.status = 'ignored'
             order.notes = 'auto-ignored: no electronics/maker items'.strip()
+        elif vendor == 'jlcpcb' and event == 'ordered':
+            order.notes = JLCPCB_QTY_NOTE
         elif payment_derived:
             # Flag the provenance: this order came from a payment receipt, so
             # its number may be PayPal's and its items are probably missing.
@@ -315,6 +317,7 @@ def _upsert_order(account, message, parsed):
                 f'Line items are usually absent from a payment receipt - add '
                 f'them by hand or from the seller\'s own order email.'
             )
+        _flag_truncated_items(order, parsed)
     else:
         # A SECOND order-confirmation for an order we already have. A resend is
         # harmless, but on AliExpress it means a split checkout whose other
@@ -361,8 +364,58 @@ def _upsert_order(account, message, parsed):
         if (parsed['items'] and not order.items.count()
                 and (absorbed_payment_shell or event == 'ordered')):
             create_order_items(order, parsed['items'], event=event, account=account)
+        elif vendor == 'jlcpcb' and event != 'ordered' and parsed['items']:
+            _correct_jlcpcb_board_qty(order, parsed['items'])
 
     return order
+
+
+def _flag_truncated_items(order, parsed):
+    """Say so when the email itself admits it lists only part of the order.
+
+    DigiKey's confirmation shows ~10 lines then "10 of 17 parts displayed"
+    (2026-10-01): the other 7 are on the website only, and
+    an order holding 10 confirmed lines otherwise looks complete.
+    """
+    shown, total = len(parsed.get('items') or []), parsed.get('items_total')
+    if total and total > shown:
+        note = (f'INCOMPLETE: the email listed {shown} of {total} lines - '
+                f'add the rest from the vendor\'s order page.')
+        order.notes = f'{order.notes}\n{note}' if order.notes else note
+
+
+# JLCPCB's review email (the only order record it sends) names each design but
+# not how many boards, so the parser files qty 5 - JLCPCB's minimum. The
+# shipping email does state "N pcs" and corrects it via
+# _correct_jlcpcb_board_qty; until then the count is a guess.
+JLCPCB_QTY_NOTE = ('jlcpcb: created from the "Order Review" email, which states '
+                   'no board count - qty 5 (JLCPCB minimum) is a placeholder '
+                   'until the shipping email corrects it. No total either.')
+
+
+def _correct_jlcpcb_board_qty(order, parsed_items):
+    """Take the board count from a JLCPCB shipping email.
+
+    Only before receipt (stock has not moved), and only when the line is
+    unambiguous: the same title, or one board on each side.
+    """
+    if order.status == 'received':
+        return
+    items = [it for it in order.items if it.match_status != 'ignored']
+    for p in parsed_items:
+        if not p.get('is_component', True) or not p.get('qty'):
+            continue
+        same = [it for it in items if it.raw_title == p['title']]
+        if not same and len(items) == 1 and len(parsed_items) == 1:
+            same = items
+        if len(same) == 1 and same[0].qty != p['qty']:
+            current_app.logger.info(
+                f'jlcpcb order {order.id}: board qty {same[0].qty} -> {p["qty"]} '
+                f'from shipping email ({p["title"]})')
+            same[0].qty = p['qty']
+            if order.notes and JLCPCB_QTY_NOTE in order.notes:
+                order.notes = order.notes.replace(
+                    JLCPCB_QTY_NOTE, 'jlcpcb: board qty confirmed by the shipping email.')
 
 
 def _maybe_auto_receive(order):

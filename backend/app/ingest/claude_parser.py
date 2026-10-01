@@ -18,6 +18,18 @@ EVENTS = ('ordered', 'shipped', 'delivered')
 
 # Vendors whose PAYMENT receipts may stand in for a missing order email.
 #
+# EMPTY SINCE 2026-10-01 (Don): PayPal receipts are no longer ingested for ANY
+# vendor - "they aren't providing useful data". Every payment-derived order was
+# a total and PayPal's transaction id with zero line items, so nothing ever
+# matched inventory (a JLCPCB board order on 2026-10-01 was
+# the last straw). The parser still classifies receipts (payment_derived=true)
+# so this gate can drop them deterministically. JLCPCB now files from its own
+# "Order Review # W... Completed" email instead - see the JLCPCB prompt rules.
+# Seeed and eBay have NO other path: their own mail goes to Outlook, so those
+# purchases appear only if the seller's own email is forwarded to the mailbox.
+#
+# History below kept for context.
+#
 # A PayPal receipt is a poor substitute for the real thing: it carries
 # PayPal's transaction id rather than the vendor's order number, and usually
 # only the merchant and a total, so the order lands with no line items to
@@ -48,7 +60,7 @@ EVENTS = ('ordered', 'shipped', 'delivered')
 # dropped right here, and the review email was dropped as a status-with-no-order.
 # Both got ProcessedMessage rows, so neither would EVER have been retried.
 # Expect thin orders - JLCPCB bills a build and the PayPal receipt itemises nothing.
-PAYMENT_FALLBACK_VENDORS = ('seeed', 'ebay', 'jlcpcb')
+PAYMENT_FALLBACK_VENDORS = ()
 
 SYSTEM_PROMPT = """You are a strict parser for vendor order emails feeding an \
 electronics inventory system. You receive one email (subject, sender, body) \
@@ -84,7 +96,9 @@ fences. The schema is:
   "tracking": string | null,    // tracking number if present
   "carrier": string | null,     // carrier name if present (UPS, USPS, FedEx, ...)
   "eta": string | null,         // estimated delivery date, ISO-8601 if determinable
-  "total": number | null        // ORDER grand total, numeric only, no currency
+  "total": number | null,       // ORDER grand total, numeric only, no currency
+  "items_total": integer | null // line count the ORDER has, ONLY when the email
+                                // says it shows fewer ("10 of 17 parts displayed")
 }
 
 Rules:
@@ -192,6 +206,21 @@ Rules:
   is_component=true, is_kit=false, qty = NUMBER OF BOARDS ordered,
   units_per_item=1. Put the board/design name in the title when the email
   gives one, so it can be matched to an existing PCB component.
+- JLCPCB never sends an order confirmation. Its "Order Review # W... Completed"
+  email IS the order record: is_order=true, event "ordered", order_no = the
+  W-number verbatim (e.g. "W2026010112345678"), order_no_source "merchant",
+  payment_derived=false, total=null (the email states none). Each design it
+  lists ("a912d97ffd95_sentinel-dog-revA...", "Approved") is ONE board item.
+- JLCPCB "Your JLCPCB Order Is On Its Way" -> event "shipped", order_no = the
+  W-number in "Items in this shipment: [W...]", tracking from "Tracking
+  Number", carrier as written ("Global Standard Direct Line" etc.). List its
+  designs as items too, with the "N pcs" count as qty.
+- JLCPCB design names: the upload adds a 12-hex-character prefix and an
+  underscore ("a912d97ffd95_") and the email may truncate with "..." - drop
+  both, and drop a trailing "-gerbers" / "_Y19"-style suffix. Title the item
+  "<design> PCB", e.g. "sentinel-dog-revA PCB". qty = the "N pcs" count when
+  the email states one; the review email states none, so use 5 (JLCPCB's
+  minimum) there.
 - JLCPCB non-board charges are NOT components: engineering/setup fees, stencil
   fees, shipping, customs/tax, coupons and discounts -> is_component=false.
   They still count toward the order total.
@@ -253,8 +282,13 @@ Rules:
   DigiKey <digikey part number>)", e.g. "IC REG BUCK BOOST ADJ 4A 14VSON
   (MPN TPS63020DSJR, DigiKey 296-25616-1-ND)" - the MPN is the part identity, the
   description alone is too terse to match. Use the "Unit price" field as
-  unit_price. Shipping, tax, tariff, Digi-Reel/reeling fees and "Backorder"
-  rows are NOT items; reeling fees still count toward the total. A part sold
+  unit_price. Shipping, tax, tariff and Digi-Reel/reeling fees are NOT items;
+  reeling fees still count toward the total. "Backorder" is a COLUMN on a
+  line, not a separate charge: qty = Quantity + Backorder. A line reading
+  "Quantity 0 / Backorder 10" is still an item with qty 10 - it is bought,
+  just not shipping yet (2026-10-01: a fully backordered 10uF cap was dropped).
+  DigiKey's confirmation shows at most ~10 lines and then says "10 of 17 parts
+  displayed": list what is shown and set items_total to the 17. A part sold
   as Cut Tape / Tape & Reel / Digi-Reel is still qty = PIECES with
   units_per_item=1. A shipment notice that lists no line items -> items=[].
 - Texas Instruments (vendor "ti") sells its own ICs, evaluation modules (EVMs)
@@ -319,6 +353,14 @@ def _extract_json(text):
             return None
 
 
+def _positive_int(value):
+    try:
+        n = int(value)
+    except (ValueError, TypeError):
+        return None
+    return n if n > 0 else None
+
+
 def _normalize(parsed):
     """Coerce the parsed payload into the expected shape"""
     if not isinstance(parsed, dict):
@@ -360,15 +402,14 @@ def _normalize(parsed):
 
     order_no = parsed.get('order_no')
 
-    # A payment receipt only counts as an order for vendors whose own mail
-    # cannot reach us (PAYMENT_FALLBACK_VENDORS). For anyone else it would
-    # duplicate an order the seller's own email already created.
+    # Payment receipts are dropped for every vendor since 2026-10-01
+    # (PAYMENT_FALLBACK_VENDORS is empty): they never carried line items.
     payment_derived = bool(parsed.get('payment_derived'))
     if payment_derived and vendor not in PAYMENT_FALLBACK_VENDORS:
         return {'is_order': False, 'vendor': vendor, 'order_no': None,
                 'event': None, 'items': [], 'total': None, 'tracking': None,
                 'carrier': None, 'eta': None, 'payment_derived': True,
-                'order_no_source': None, 'skipped_reason': 'payment receipt for a vendor that mails us directly'}
+                'order_no_source': None, 'skipped_reason': 'payment receipt - not ingested since 2026-10-01'}
 
     # Grand total. Kept even when items is empty - a redacted Amazon
     # confirmation ("Ordered: 5 Electronics items") carries no titles at all,
@@ -404,6 +445,7 @@ def _normalize(parsed):
         'tracking': (str(parsed.get('tracking')).strip() or None) if parsed.get('tracking') else None,
         'carrier': (str(parsed.get('carrier')).strip() or None) if parsed.get('carrier') else None,
         'eta': (str(parsed.get('eta')).strip() or None) if parsed.get('eta') else None,
+        'items_total': _positive_int(parsed.get('items_total')),
     }
 
 
