@@ -21,6 +21,40 @@ from app import db
 from app.models.component import Component
 from app.ingest.claude_parser import MODEL, _client, _extract_json
 
+
+# Web-tool calls (2026-10-01 cost pass). The _20260209 tool versions filter
+# search/fetch results with code before they enter the context window, and
+# max_content_tokens caps how much of a fetched page or PDF is billed - before
+# this, whole datasheets were pulled in and re-billed on every server-side
+# sampling step. Both are GA: no beta header, and no silent second request.
+FETCH_MAX_TOKENS = 15000
+PAUSE_RESUMES = 2
+
+
+def web_tools(searches, fetches, fetch_tokens=FETCH_MAX_TOKENS):
+    return [
+        {'type': 'web_search_20260209', 'name': 'web_search', 'max_uses': searches},
+        {'type': 'web_fetch_20260209', 'name': 'web_fetch', 'max_uses': fetches,
+         'max_content_tokens': fetch_tokens},
+    ]
+
+
+def web_call(client, *, max_tokens, system, messages, searches, fetches,
+             fetch_tokens=FETCH_MAX_TOKENS):
+    """One web-tool request; resumes a server-side pause_turn a bounded number
+    of times so a long search does not come back with no answer."""
+    messages = list(messages)
+    tools = web_tools(searches, fetches, fetch_tokens)
+    response = client.messages.create(model=MODEL, max_tokens=max_tokens,
+                                      system=system, tools=tools, messages=messages)
+    for _ in range(PAUSE_RESUMES):
+        if response.stop_reason != 'pause_turn':
+            break
+        messages = messages + [{'role': 'assistant', 'content': response.content}]
+        response = client.messages.create(model=MODEL, max_tokens=max_tokens,
+                                          system=system, tools=tools, messages=messages)
+    return response
+
 SEARCH_SYSTEM = """You find reference assets for electronic components in an \
 inventory system. Use web search to locate:
 
@@ -150,28 +184,9 @@ def find_assets(component):
             f'Specs: {json.dumps(component.specs or {})}'
         ),
     }]
-    client = _client()
-    try:
-        # web_fetch lets Claude open a product page and lift the real photo URL
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=2000,
-            system=SEARCH_SYSTEM,
-            tools=[
-                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 3},
-                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
-            ],
-            betas=['web-fetch-2025-09-10'],
-            messages=messages,
-        )
-    except Exception:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=2000,
-            system=SEARCH_SYSTEM,
-            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4}],
-            messages=messages,
-        )
+    client = _client('enrich.find_assets')
+    # web_fetch lets Claude open a product page and lift the real photo URL
+    response = web_call(client, max_tokens=2000, system=SEARCH_SYSTEM, messages=messages, searches=3, fetches=3)
     # With server tools the answer is the LAST text block
     text = ''
     for block in response.content:
@@ -323,27 +338,8 @@ def component_from_url(source, categories):
         'role': 'user',
         'content': f"Allowed categories: {', '.join(categories)}\n\n{task}",
     }]
-    client = _client()
-    try:
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=2500,
-            system=FROM_URL_SYSTEM,
-            tools=[
-                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
-                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 3},
-            ],
-            betas=['web-fetch-2025-09-10'],
-            messages=messages,
-        )
-    except Exception:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=2500,
-            system=FROM_URL_SYSTEM,
-            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4}],
-            messages=messages,
-        )
+    client = _client('enrich.component_from_url')
+    response = web_call(client, max_tokens=2500, system=FROM_URL_SYSTEM, messages=messages, searches=3, fetches=3)
     text = ''
     for block in response.content:
         if block.type == 'text':
@@ -403,23 +399,8 @@ def search_component_candidates(component, hint):
         f'Specs: {json.dumps(component.specs or {})}\n\n'
         f'User search hint: {hint or component.name}'
     )
-    client = _client()
-    try:
-        response = client.beta.messages.create(
-            model=MODEL, max_tokens=3000, system=LOOKUP_SYSTEM,
-            tools=[
-                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4},
-                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
-            ],
-            betas=['web-fetch-2025-09-10'],
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-    except Exception:
-        response = client.messages.create(
-            model=MODEL, max_tokens=3000, system=LOOKUP_SYSTEM,
-            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 5}],
-            messages=[{'role': 'user', 'content': prompt}],
-        )
+    client = _client('enrich.search_component_candidates')
+    response = web_call(client, max_tokens=3000, system=LOOKUP_SYSTEM, messages=[{'role': 'user', 'content': prompt}], searches=4, fetches=3)
     text = ''
     for block in response.content:
         if block.type == 'text':
@@ -503,27 +484,8 @@ def estimate_price(component):
             f'Description: {component.description or ""}'
         ),
     }]
-    client = _client()
-    try:
-        response = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=1500,
-            system=PRICE_SYSTEM,
-            tools=[
-                {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 4},
-                {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 3},
-            ],
-            betas=['web-fetch-2025-09-10'],
-            messages=messages,
-        )
-    except Exception:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=1500,
-            system=PRICE_SYSTEM,
-            tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 5}],
-            messages=messages,
-        )
+    client = _client('enrich.estimate_price')
+    response = web_call(client, max_tokens=1500, system=PRICE_SYSTEM, messages=messages, searches=4, fetches=3)
 
     # With server tools the answer is the LAST text block
     text = ''

@@ -117,6 +117,17 @@ def get_accounts():
     return [a.strip() for a in os.getenv('INGEST_ACCOUNTS', 'don,deanna').split(',') if a.strip()]
 
 
+def polling_enabled():
+    """INGEST_GMAIL_ENABLED=0 stops Gmail polling (2026-10-01).
+
+    Separate from INGEST_ACCOUNTS on purpose: that list also maps users to
+    their orders, so emptying it would break the per-user order views. With
+    Gmail off, the parts@ mailbox (IMAP) is the only ingestion source, and the
+    token monitor and dashboard stop reporting Gmail tokens.
+    """
+    return os.getenv('INGEST_GMAIL_ENABLED', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+
+
 def _load_json(path):
     if not os.path.exists(path):
         return {}

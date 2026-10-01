@@ -31,6 +31,14 @@ STATE_PATH = os.environ.get('ENRICH_STATE_PATH',
 MISS_LIMIT = 4
 COLD_RETRY_DAYS = 30
 
+# 2026-10-01 cost pass. A datasheet is not meaningful for these (the search
+# prompt already tells Claude to return null for hookup wire, enclosures, kits
+# and tools), so a missing one must not keep a part in the nightly queue.
+NO_DATASHEET_CATEGORIES = ('Mechanical', 'Wire & Cable', 'Tools', 'Prototyping')
+# A part missing ONLY a datasheet is the commonest repeat miss (generic
+# passives, unbranded modules); give up on it sooner than on image/dimensions.
+DATASHEET_ONLY_MISS_LIMIT = 2
+
 
 def _load_state():
     try:
@@ -53,7 +61,7 @@ def _wants(component):
     missing = []
     if not component.image:
         missing.append('image')
-    if not component.datasheet_url:
+    if not component.datasheet_url and component.category not in NO_DATASHEET_CATEGORIES:
         missing.append('datasheet')
     if component.category not in STANDARD_PACKAGE_CATEGORIES:
         specs = component.specs or {}
@@ -133,7 +141,8 @@ def enrich_nightly(limit, dry_run):
             last = None
         # Parts nobody publishes data for drop to the slow lane instead of
         # costing a web search every night forever.
-        if misses >= MISS_LIMIT and last and last > cold_before:
+        miss_limit = DATASHEET_ONLY_MISS_LIMIT if missing == ['datasheet'] else MISS_LIMIT
+        if misses >= miss_limit and last and last > cold_before:
             slow_lane += 1
             continue
         candidates.append((last or datetime.min, component, missing))

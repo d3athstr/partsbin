@@ -15,6 +15,7 @@ stocked as a single component (the pre-2026-07-16 behavior).
 import json
 
 from app.ingest.claude_parser import MODEL, _client, _extract_json
+from app.ingest.enrich import web_call
 
 KIT_SYSTEM = """You determine the exact contents of an electronics assortment \
 kit for an inventory system. You receive the raw order-item title of a kit \
@@ -81,28 +82,9 @@ def research_kit_contents(title, categories, vendor=None):
         f"Vendor: {vendor or 'unknown'}\n"
         f"Kit order-item title: {title}"
     )
-    client = _client()
+    client = _client('ingest.kit_breakout')
     try:
-        try:
-            response = client.beta.messages.create(
-                model=MODEL,
-                max_tokens=6000,
-                system=KIT_SYSTEM,
-                tools=[
-                    {'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 5},
-                    {'type': 'web_fetch_20250910', 'name': 'web_fetch', 'max_uses': 5},
-                ],
-                betas=['web-fetch-2025-09-10'],
-                messages=[{'role': 'user', 'content': prompt}],
-            )
-        except Exception:
-            response = client.messages.create(
-                model=MODEL,
-                max_tokens=6000,
-                system=KIT_SYSTEM,
-                tools=[{'type': 'web_search_20250305', 'name': 'web_search', 'max_uses': 6}],
-                messages=[{'role': 'user', 'content': prompt}],
-            )
+        response = web_call(client, max_tokens=6000, system=KIT_SYSTEM, messages=[{'role': 'user', 'content': prompt}], searches=5, fetches=5, fetch_tokens=25000)
     except Exception:
         return None
 

@@ -247,9 +247,10 @@ Rules:
 - If is_order is false, all other fields may be null/empty."""
 
 
-def _client():
+def _client(purpose='unknown'):
     import anthropic
-    return anthropic.Anthropic()
+    from app.ingest.claude_usage import TrackedClient
+    return TrackedClient(anthropic.Anthropic(), purpose)
 
 
 def _extract_json(text):
@@ -399,7 +400,7 @@ def parse_order_email(subject, sender, body):
         body = _html_to_text(body)
     body = body[:MAX_BODY_CHARS]
 
-    response = _client().messages.create(
+    response = _client('ingest.parse_order_email').messages.create(
         model=MODEL,
         max_tokens=4096,
         system=SYSTEM_PROMPT,
@@ -480,7 +481,7 @@ def infer_components(titles, categories):
         f"Items:\n{numbered}"
     )
 
-    response = _client().messages.create(
+    response = _client('ingest.infer_components').messages.create(
         model=MODEL,
         max_tokens=4096,
         system=COMPONENT_SYSTEM_PROMPT,

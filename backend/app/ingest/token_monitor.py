@@ -62,7 +62,7 @@ def run_token_monitor():
     tokens = gmail_client.load_tokens()
     summary = []
 
-    for account in gmail_client.get_accounts():
+    for account in (gmail_client.get_accounts() if gmail_client.polling_enabled() else []):
         token = tokens.get(account)
         if token is None:
             summary.append({'account': account, 'status': 'missing'})

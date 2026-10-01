@@ -402,8 +402,11 @@ def _ingest_sources(accounts=None):
     _payment_twin covers receipts that carry no order number.
     """
     sources = []
-    for account in accounts or gmail_client.get_accounts():
-        sources.append((account, 'gmail', gmail_client.poll_account, True))
+    # Gmail can be switched off (INGEST_GMAIL_ENABLED=0, done 2026-10-01 once
+    # forwarding covered every vendor): it was parsing most orders twice.
+    if gmail_client.polling_enabled():
+        for account in accounts or gmail_client.get_accounts():
+            sources.append((account, 'gmail', gmail_client.poll_account, True))
     if imap_client.is_enabled():
         cfg = imap_client.imap_config()
         if accounts is None or cfg['account'] in accounts:
@@ -539,7 +542,7 @@ def ingest_status():
     state = gmail_client.load_state()
 
     statuses = []
-    for account in gmail_client.get_accounts():
+    for account in (gmail_client.get_accounts() if gmail_client.polling_enabled() else []):
         token = tokens.get(account)
         account_state = state.get(account, {})
 
