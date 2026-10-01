@@ -12,7 +12,8 @@ MODEL = os.getenv('PARTSBIN_CLAUDE_MODEL', 'claude-sonnet-5')
 MAX_BODY_CHARS = 24000
 
 VENDORS = ('amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey', 'seeed', 'rokland',
-           'jlcpcb', 'pololu', 'ebay', 'polycase', 'onlinemetals', 'yakima')
+           'jlcpcb', 'pololu', 'ebay', 'polycase', 'onlinemetals', 'yakima',
+           'eletechsup', 'coldandcolder')
 EVENTS = ('ordered', 'shipped', 'delivered')
 
 # Vendors whose PAYMENT receipts may stand in for a missing order email.
@@ -54,7 +55,9 @@ electronics inventory system. You receive one email (subject, sender, body) \
 from Amazon, AliExpress, Adafruit, Mouser, DigiKey, Seeed Studio, Rokland, \
 Pololu (Robotics & Electronics), JLCPCB (a PCB fabricator), eBay, Polycase \
 (plastic and aluminium enclosures), OnlineMetals (cut-to-size metal and \
-plastic stock) or Yakima (roof-rack towers, crossbars and mounts).
+plastic stock), Yakima (roof-rack towers, crossbars and mounts), Eletechsup \
+(RS485/Modbus relay and I/O boards, DIN-rail control modules) or Cold & Colder \
+(silicone tubing, Peltier/thermoelectric cooling parts and water-cooling gear).
 
 Respond with ONLY a single JSON object - no prose, no explanation, no markdown \
 fences. The schema is:
@@ -63,7 +66,7 @@ fences. The schema is:
   "is_order": boolean,          // true only for order confirmation / shipment / delivery notices
   "vendor": "amazon" | "aliexpress" | "adafruit" | "mouser" | "digikey" | "seeed"
           | "rokland" | "jlcpcb" | "pololu" | "ebay" | "polycase" | "onlinemetals"
-          | "yakima" | "other",
+          | "yakima" | "eletechsup" | "coldandcolder" | "other",
   "order_no": string | null,    // the vendor's order number, verbatim
   "payment_derived": boolean,   // true only for a PAYMENT receipt (PayPal), not a seller email
   "order_no_source": "merchant" | "paypal" | null,   // where order_no came from
@@ -101,6 +104,21 @@ Rules:
     Ohio, enclosures) is unrelated and independently owned.
   * "Polycase, Inc." / "Polycase Inc" / "ECP" -> vendor "polycase".
   * "Yakima Products, Inc." -> vendor "yakima".
+  * "Eletechsup", "Eletechsup Retail Original Factory Store", "485IO",
+    "485io.com", "Shenzhen Eletechsup Technology" and any Shenzhen/Chinese
+    legal entity whose receipt carries the eletechsup.com or 485io.com store
+    domain -> vendor "eletechsup". 485io.com is the same company's other
+    storefront, not a separate vendor.
+  * "Cold & Colder", "Cold and Colder", "ColdandColder", "Cold & Colder LLC"
+    (Sheridan, Wyoming) -> vendor "coldandcolder".
+- BRAND IS NOT VENDOR ON A MARKETPLACE. Eletechsup and Cold & Colder also sell
+  through Amazon, eBay, AliExpress and Etsy storefronts. The vendor is where
+  the ORDER WAS PLACED, not whose product it is: an Amazon confirmation that
+  happens to contain an eletechsup relay board is vendor "amazon", and an eBay
+  or PayPal receipt for a Cold & Colder purchase is vendor "ebay". The brand
+  belongs in the item TITLE, never in the vendor field. Only the store's own
+  order mail (from eletechsup.com / 485io.com / coldandcolder.com, typically a
+  Shopify "Order #1234 confirmed") files as "eletechsup" / "coldandcolder".
 - order_date: the date the purchase was actually made. For a FORWARDED email
   this is the date on the ORIGINAL message ("Sent: August 9, 2026 5:33 PM" in
   the forwarded header), NOT the date it was forwarded, which may be days
@@ -189,6 +207,29 @@ Rules:
   are different components. Vehicle-fit lookups, warranty registrations,
   assembly service, shipping and tax -> is_component=false. A "fit kit"
   containing brackets for ONE vehicle is not an assortment: is_kit=false.
+- Eletechsup sells INDUSTRIAL CONTROL BOARDS: RS485/Modbus RTU relay boards,
+  digital-IO and analog modules, DIN-rail enclosed controllers, UART/TTL and
+  Ethernet boards, plus the DIN rail, cases and supplies that go with them.
+  All of that is inventory (is_component=true). Its identity is a terse
+  alphanumeric model code ("R4D8A08", "N4ROE16", "10IOA08", "DN22D08",
+  "R413E16") - keep the model code AND the channel count AND the supply
+  voltage in the title verbatim ("R4D8A08 DC 12V 8CH RS485 Relay Board"),
+  because the same family in 5V/12V/24V or 4/8/16 channels is a DIFFERENT
+  component, not a re-order. A multi-channel board is ONE product, never an
+  assortment: is_kit=false. A listing quantity in the title ("(1pcs)",
+  "(2pcs)", "5PCS") is the PACK SIZE -> units_per_item, not qty. Shipping,
+  tax and customs -> is_component=false.
+- Cold & Colder sells SILICONE TUBING and THERMOELECTRIC COOLING parts: tubing
+  by length, Peltier/TEC modules ("TEC1-12706"), water blocks, pumps,
+  radiators, fans, thermal sheets and pads, and assembled water-cooling kits.
+  All inventory (is_component=true). Tubing behaves like cut stock - keep the
+  ID, OD and LENGTH in the title verbatim ("1/4\" ID x 3/8\" OD Silicone
+  Tubing 10 ft"), since the same tubing in another size is a DIFFERENT
+  component; set units_per_item=1 and leave the length in the title rather
+  than exploding feet into pieces. A water-cooling kit of MATCHED parts
+  (block + pump + radiator + tubing) is a single product, is_kit=false - it
+  is not an assortment of varying values to be stocked separately. Shipping
+  and tax -> is_component=false.
 - units_per_item: pack size stated in the title ("50pcs", "2-pack", "x10");
   1 when unclear. Do NOT multiply it into qty - report them separately.
 - is_component: true for anything that belongs in an electronics/maker
@@ -382,7 +423,7 @@ def parse_order_email(subject, sender, body):
 COMPONENT_SYSTEM_PROMPT = """You turn raw vendor order-item titles into clean \
 component definitions for an electronics inventory. You receive a numbered list \
 of item titles (from Amazon/AliExpress/Adafruit/Mouser/DigiKey/Seeed/Rokland/Pololu/JLCPCB/eBay/\
-Polycase/OnlineMetals/Yakima \
+Polycase/OnlineMetals/Yakima/Eletechsup/Cold & Colder \
 orders) and a \
 list of allowed categories.
 

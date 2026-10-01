@@ -62,9 +62,31 @@ FORWARD_ADDRESS = os.getenv('INGEST_FORWARD_ADDRESS', '').strip()
 # INGEST_FORWARD_ADDRESS that carries it — and that only works if the
 # auto-forward rule actually includes Pololu. It covers Adafruit only, which is
 # exactly how Seeed ended up inert. Widen the rule or forward by hand.
+# ebay.com / polycase.com / onlinemetals.com / yakima.com: eBay, enclosures
+# (Polycase), cut-to-size metal and plastic stock (OnlineMetals) and roof-rack
+# hardware (Yakima). These four were live on the deployed host from 2026-08-12
+# and 2026-08-27 but were missing from this file until 2026-09-20 — deploying
+# this copy over the host would silently have dropped four vendors. If you add
+# a vendor, add it HERE, not only on the host.
+# eletechsup.com / 485io.com / coldandcolder.com: Eletechsup (RS485/Modbus
+# relay and I/O boards, DIN-rail control modules; 485io.com is the same
+# company's other storefront) and Cold & Colder (silicone tubing, Peltier
+# cooling parts, water-cooling gear). Added 2026-09-20.
+# BELT-AND-BRACES ONLY, and UNTESTED. The stated route for both is a forward
+# from a secondary mailbox, and `imap_client` has NO sender allowlist, so the
+# vendor-enum gates (claude_parser.VENDORS, the prompts, ORDER_VENDORS and the
+# two frontend lists) are what actually decide whether these orders file
+# correctly. No sending domain has ever been observed for either: both run
+# Shopify storefronts, so the real From may well be a Shopify or Klaviyo
+# address on another domain, in which case these terms miss. CHECK THE REVIEW
+# QUEUE ON THE FIRST ORDER FROM EACH and correct the domain from the real
+# From header. Both brands ALSO sell via Amazon/eBay/AliExpress/Etsy — a
+# marketplace purchase files under the marketplace, not the brand.
 GMAIL_QUERY_BASE = (
     'from:(amazon.com OR aliexpress OR adafruit.com OR mouser.com OR digikey.com '
     'OR seeed.cc OR seeedstudio.com OR rokland.com OR jlcpcb.com OR pololu.com '
+    'OR ebay.com OR polycase.com OR onlinemetals.com OR yakima.com '
+    'OR eletechsup.com OR 485io.com OR coldandcolder.com '
     'OR paypal.com' + (f' OR {FORWARD_ADDRESS}' if FORWARD_ADDRESS else '') + ') '
     'in:anywhere -in:spam '
     '-from:pharmacy.amazon.com -subject:"Amazon Pharmacy"'  # never ingest pharmacy mail

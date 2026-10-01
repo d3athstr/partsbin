@@ -2,7 +2,8 @@
 // component "where to buy" vendor dropdown.
 export const VENDORS = ['amazon', 'aliexpress', 'adafruit', 'mouser', 'digikey',
                         'seeed', 'rokland', 'jlcpcb', 'pololu', 'ebay', 'polycase',
-                        'onlinemetals', 'yakima', 'other'];
+                        'onlinemetals', 'yakima', 'eletechsup', 'coldandcolder',
+                        'other'];
 
 /**
  * Short human label for a component's vendor purchase reference, e.g.
