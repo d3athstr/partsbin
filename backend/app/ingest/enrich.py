@@ -22,37 +22,52 @@ from app.models.component import Component
 from app.ingest.claude_parser import MODEL, _client, _extract_json
 
 
-# Web-tool calls (2026-10-01 cost pass). The _20260209 tool versions filter
-# search/fetch results with code before they enter the context window, and
-# max_content_tokens caps how much of a fetched page or PDF is billed - before
-# this, whole datasheets were pulled in and re-billed on every server-side
-# sampling step. Both are GA: no beta header, and no silent second request.
-FETCH_MAX_TOKENS = 15000
-PAUSE_RESUMES = 2
+# Web-tool calls. History matters here - read before "upgrading" the tools:
+# - 2026-10-01: moved to the web_*_20260209 tools (dynamic filtering) expecting
+#   lower cost. MEASURED THE OPPOSITE for this workload: dynamic filtering runs
+#   extra code-execution steps and every step re-bills the whole context, so a
+#   nightly find_assets call averaged ~555k input tokens / ~$1.19 (max 1.75M,
+#   15 min) and estimate_price roughly doubled vs the basic tools.
+# - 2026-10-03: back to the basic tools (beta web-fetch header), keeping the
+#   max_content_tokens cap, plus low effort (Sonnet 5 thinks by default) and a
+#   hard cap of 2 searches + 2 fetches per call. Check
+#   /var/log/partsbin/anthropic-usage.log before changing any of this.
+FETCH_MAX_TOKENS = 8000
+MAX_SEARCHES = 2
+MAX_FETCHES = 2
+MIN_MAX_TOKENS = 4000   # 2000 truncated find_assets twice (stop_reason max_tokens)
+EFFORT = 'low'
+PAUSE_RESUMES = 1
 
 
 def web_tools(searches, fetches, fetch_tokens=FETCH_MAX_TOKENS):
     return [
-        {'type': 'web_search_20260209', 'name': 'web_search', 'max_uses': searches},
-        {'type': 'web_fetch_20260209', 'name': 'web_fetch', 'max_uses': fetches,
-         'max_content_tokens': fetch_tokens},
+        {'type': 'web_search_20250305', 'name': 'web_search',
+         'max_uses': min(searches, MAX_SEARCHES)},
+        {'type': 'web_fetch_20250910', 'name': 'web_fetch',
+         'max_uses': min(fetches, MAX_FETCHES), 'max_content_tokens': fetch_tokens},
     ]
 
 
 def web_call(client, *, max_tokens, system, messages, searches, fetches,
              fetch_tokens=FETCH_MAX_TOKENS):
-    """One web-tool request; resumes a server-side pause_turn a bounded number
-    of times so a long search does not come back with no answer."""
+    """One web-tool request. Errors propagate (no silent second paid request);
+    a server-side pause_turn is resumed at most PAUSE_RESUMES times."""
     messages = list(messages)
-    tools = web_tools(searches, fetches, fetch_tokens)
-    response = client.messages.create(model=MODEL, max_tokens=max_tokens,
-                                      system=system, tools=tools, messages=messages)
+    kwargs = dict(
+        model=MODEL,
+        max_tokens=max(max_tokens, MIN_MAX_TOKENS),
+        system=system,
+        tools=web_tools(searches, fetches, fetch_tokens),
+        betas=['web-fetch-2025-09-10'],
+        output_config={'effort': EFFORT},
+    )
+    response = client.beta.messages.create(messages=messages, **kwargs)
     for _ in range(PAUSE_RESUMES):
         if response.stop_reason != 'pause_turn':
             break
         messages = messages + [{'role': 'assistant', 'content': response.content}]
-        response = client.messages.create(model=MODEL, max_tokens=max_tokens,
-                                          system=system, tools=tools, messages=messages)
+        response = client.beta.messages.create(messages=messages, **kwargs)
     return response
 
 SEARCH_SYSTEM = """You find reference assets for electronic components in an \
