@@ -134,8 +134,25 @@ marketplace modules frequently publish no drawing at all; omitting the
 dimensions is the correct answer there, and a wrong number is far worse than
 a missing one because a board gets fabbed around it.
 
+URLS - copy every URL exactly as it appears in a search result or a fetched
+page. Never construct, complete, or "fix" a URL path from a pattern (a guessed
+manufacturer PDF path 404s - seen 2026-10-03 on Yageo and MCC parts). If you
+found only a product page and no direct PDF link, datasheet_url is null.
+
 If you cannot find a confident, directly-linkable asset or verifiable fact,
 use null / omit the spec - never guess or fabricate."""
+
+# Dimensions are a REGULAR part of every search that defines or identifies a
+# component (Don, 2026-10-03: "so we can know appropriate circuit board
+# layouts"). One copy of the rules, shared by enrichment, create-from-URL and
+# candidate lookup, so the three can never drift apart.
+DIMENSIONS_RULES = SEARCH_SYSTEM[SEARCH_SYSTEM.index('DIMENSIONS - millimetres'):
+                                 SEARCH_SYSTEM.index('URLS - copy every URL')].rstrip()
+_URL_RULES = SEARCH_SYSTEM[SEARCH_SYSTEM.index('URLS - copy every URL'):
+                           SEARCH_SYSTEM.index('If you cannot find a confident')].rstrip()
+_DIMS_ADDENDUM = ('\n\nAlways include verified dimensions in "specs" (dim_* keys, '
+                  'or `package` for a standard-package part):\n\n' + DIMENSIONS_RULES
+                  + '\n\n' + _URL_RULES)
 
 PRICE_SYSTEM = """You find the current street price of an electronics part for \
 an inventory system's budgeting.
@@ -317,6 +334,15 @@ def _datasheet_ok(url):
     return _datasheet_check(url)[0]
 
 
+def _normalize_datasheet_url(url):
+    """GitHub 'blob' links are an HTML viewer; the raw link is the PDF itself."""
+    p = urlparse(url)
+    if p.hostname == 'github.com' and '/blob/' in p.path:
+        owner_repo, rest = p.path.split('/blob/', 1)
+        return f'https://raw.githubusercontent.com{owner_repo}/{rest}'
+    return url
+
+
 def enrich_component(component_id, force=False):
     """Find + attach image/datasheet/metadata for one component.
 
@@ -359,10 +385,11 @@ def enrich_component(component_id, force=False):
             trace['image_rejects'].append(url)
 
     if not component.datasheet_url and assets.get('datasheet_url'):
-        ok, reason = _datasheet_check(assets['datasheet_url'])
+        ds_url = _normalize_datasheet_url(str(assets['datasheet_url']).strip())
+        ok, reason = _datasheet_check(ds_url)
         trace['datasheet_check'] = reason
         if ok:
-            component.datasheet_url = assets['datasheet_url'][:500]
+            component.datasheet_url = ds_url[:500]
             result['datasheet'] = True
 
     for field, limit in (('manufacturer', 100), ('mpn', 100), ('description', None)):
@@ -410,6 +437,7 @@ Respond with ONLY one JSON object, no prose, no markdown fences:
 Strip marketing fluff from the name. Dev-board variant codes (N16R8 vs N8R2,
 USB-C vs micro-USB) matter - keep them in the name and never mix variants.
 Use null / [] rather than guessing."""
+FROM_URL_SYSTEM += _DIMS_ADDENDUM
 
 
 def component_from_url(source, categories):
@@ -473,6 +501,7 @@ Respond with ONLY one JSON object, no prose, no markdown fences:
 Return up to 4 DISTINCT candidates, most likely first. Variants (N16R8 vs
 N8R2, USB-C vs micro-USB) are different candidates - never blur them.
 Use null / [] rather than guessing."""
+LOOKUP_SYSTEM += _DIMS_ADDENDUM
 
 
 def search_component_candidates(component, hint):

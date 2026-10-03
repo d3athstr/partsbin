@@ -84,9 +84,12 @@ def _wants(component):
     if (not component.datasheet_url and component.category not in NO_DATASHEET_CATEGORIES
             and not any(m in name for m in KIT_MARKERS)):
         missing.append('datasheet')
-    if (component.category not in STANDARD_PACKAGE_CATEGORIES
-            and component.category not in NO_DIMENSION_CATEGORIES):
-        specs = component.specs or {}
+    specs = component.specs or {}
+    if component.category in STANDARD_PACKAGE_CATEGORIES:
+        # The package name IS the KiCad footprint - but only if it is recorded.
+        if not specs.get('package') and not any(k.startswith('dim_') for k in specs):
+            missing.append('dimensions')
+    elif component.category not in NO_DIMENSION_CATEGORIES:
         if not any(k.startswith('dim_') for k in specs):
             missing.append('dimensions')
     return missing
