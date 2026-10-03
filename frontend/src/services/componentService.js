@@ -65,7 +65,7 @@ const componentService = {
 
   /** Web-search candidate identifications with a user hint. */
   lookup: async (id, query) => {
-    const response = await api.post(`/components/${id}/lookup`, { query });
+    const response = await api.post(`/components/${id}/lookup`, { query, manual: true });
     return response.data;
   },
 
@@ -77,13 +77,13 @@ const componentService = {
 
   /** Web-search image/datasheet/missing metadata for a component. */
   enrich: async (id) => {
-    const response = await api.post(`/components/${id}/enrich`);
+    const response = await api.post(`/components/${id}/enrich`, { manual: true });
     return response.data;
   },
 
   /** Web-search a current street price into est_unit_cost. */
   estimatePrice: async (id, force = false) => {
-    const response = await api.post(`/components/${id}/estimate-price`, { force });
+    const response = await api.post(`/components/${id}/estimate-price`, { force, manual: true });
     return response.data;
   },
 

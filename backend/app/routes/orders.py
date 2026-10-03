@@ -588,11 +588,17 @@ def auto_create_components(id):
         def _enrich_bg():
             with app_obj.app_context():
                 from app.ingest.enrich import enrich_component
+                from app.services import ai_gate
                 for cid in new_ids:
+                    # Automatic: only a component's FIRST enrichment may run here.
+                    if ai_gate.blocked(cid, 'enrich', manual=False):
+                        continue
                     try:
                         enrich_component(cid)
                     except Exception as e:
                         app_obj.logger.warning(f'enrich component {cid}: {e}')
+                        continue
+                    ai_gate.record(cid, 'enrich', manual=False)
 
         Thread(target=_enrich_bg, daemon=True).start()
 

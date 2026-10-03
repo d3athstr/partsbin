@@ -58,10 +58,16 @@ def cost_estimate(limit, component_id, force, projects_only, dry_run):
             click.echo(f'  #{component.id} {component.name[:60]}')
         return
 
+    from app.services import ai_gate
+    manual = bool(component_id)  # naming one part is a person's explicit request
     click.echo(f'{len(components)} component(s) to price')
     priced = 0
     for component in components:
         if component.est_unit_cost is not None and not force and not component_id:
+            continue
+        if ai_gate.blocked(component.id, 'price', manual):
+            click.echo(f'  #{component.id} {component.name[:50]}: already attempted - '
+                       f'rerun with --component-id {component.id} to force')
             continue
         try:
             result = estimate_price(component)
@@ -69,6 +75,7 @@ def cost_estimate(limit, component_id, force, projects_only, dry_run):
             click.echo(f'  #{component.id} {component.name[:50]}: ERROR {e}')
             db.session.rollback()
             continue
+        ai_gate.record(component.id, 'price', manual)  # commits any estimate too
         if result is None:
             click.echo(f'  #{component.id} {component.name[:50]}: no credible price found')
             continue

@@ -9,6 +9,7 @@ from .component import Component, StockTransaction
 from .project import Project, ProjectComponent, ProjectFile, ProjectAssemblyStep
 from .order import Order, OrderItem
 from .processed_message import ProcessedMessage
+from .ai_attempt import AiAttempt
 
 __all__ = [
     'User', 'PasskeyCredential', 'InvitationCode', 'Tag', 'component_tags',

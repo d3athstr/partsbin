@@ -421,12 +421,18 @@ def lookup_component(id):
     component = Component.query.get_or_404(id)
     data = request.get_json() or {}
     hint = (data.get('query') or '').strip()
+    manual = bool(data.get('manual'))
+    from app.services import ai_gate
+    refusal = ai_gate.blocked(component.id, 'lookup', manual)
+    if refusal:
+        return {'error': refusal, 'attempt': ai_gate.get(component.id, 'lookup').to_dict()}, 409
     from app.ingest.enrich import search_component_candidates
     try:
         candidates = search_component_candidates(component, hint)
     except Exception as e:
         current_app.logger.error(f'Lookup failed for component {id}: {e}')
         return {'error': f'Lookup failed: {e}'}, 502
+    ai_gate.record(component.id, 'lookup', manual)
     return {'candidates': candidates}, 200
 
 
@@ -454,12 +460,18 @@ def apply_component_candidate(id):
 def enrich_component_route(id):
     """Web-search an image + datasheet for this component (skips human-set assets)"""
     component = Component.query.get_or_404(id)
+    manual = bool((request.get_json(silent=True) or {}).get('manual'))
+    from app.services import ai_gate
+    refusal = ai_gate.blocked(component.id, 'enrich', manual)
+    if refusal:
+        return {'error': refusal, 'attempt': ai_gate.get(component.id, 'enrich').to_dict()}, 409
     from app.ingest.enrich import enrich_component
     try:
         result = enrich_component(component.id, force=True)
     except Exception as e:
         current_app.logger.error(f'Enrich failed for component {id}: {e}')
         return {'error': f'Enrichment failed: {e}'}, 502
+    ai_gate.record(component.id, 'enrich', manual)
     return {'enriched': result, 'component': component.to_dict()}, 200
 
 
@@ -479,6 +491,12 @@ def estimate_component_price(id):
         return {'error': 'This component already has an estimate - pass '
                          'force=true to replace it'}, 409
 
+    manual = bool(data.get('manual'))
+    from app.services import ai_gate
+    refusal = ai_gate.blocked(component.id, 'price', manual)
+    if refusal:
+        return {'error': refusal, 'attempt': ai_gate.get(component.id, 'price').to_dict()}, 409
+
     from app.ingest.enrich import estimate_price
     try:
         result = estimate_price(component)
@@ -486,6 +504,8 @@ def estimate_component_price(id):
         current_app.logger.error(f'Price estimate failed for component {id}: {e}')
         return {'error': f'Price lookup failed: {e}'}, 502
 
+    # Commits the estimate fields estimate_price() set, along with the attempt.
+    ai_gate.record(component.id, 'price', manual)
     if result is None:
         return {'error': 'Could not find a current price for this part - '
                          'enter one by hand'}, 422

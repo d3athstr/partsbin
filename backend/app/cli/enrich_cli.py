@@ -88,14 +88,21 @@ def enrich_run(limit, component_id):
             .all()
         )
 
+    from app.services import ai_gate
+    manual = bool(component_id)  # naming one part is a person's explicit request
     click.echo(f'{len(components)} component(s) to enrich')
     got_image = got_ds = 0
     for component in components:
+        if ai_gate.blocked(component.id, 'enrich', manual):
+            click.echo(f'  #{component.id} {component.name[:50]}: already attempted - '
+                       f'rerun with --component-id {component.id} to force')
+            continue
         try:
             result = enrich_component(component.id)
         except Exception as e:
             click.echo(f'  #{component.id} {component.name[:50]}: ERROR {e}')
             continue
+        ai_gate.record(component.id, 'enrich', manual)
         got_image += result['image']
         got_ds += result['datasheet']
         click.echo(
@@ -121,6 +128,7 @@ def enrich_nightly(limit, dry_run):
     never be revisited by it. This is the sweep that catches those.
     """
     from app.ingest.enrich import enrich_component
+    from app.services import ai_gate
 
     state = _load_state()
     now = datetime.utcnow()
@@ -131,6 +139,11 @@ def enrich_nightly(limit, dry_run):
     for component in Component.query.order_by(Component.id).all():
         missing = _wants(component)
         if not missing:
+            continue
+        # Once per item (2026-10-03): the nightly sweep is an automatic path, so
+        # it only ever takes a component's FIRST enrichment. Retries are manual.
+        if ai_gate.blocked(component.id, 'enrich', manual=False):
+            slow_lane += 1
             continue
         entry = state.get(str(component.id)) or {}
         misses = int(entry.get('misses') or 0)
@@ -150,9 +163,8 @@ def enrich_nightly(limit, dry_run):
     candidates.sort(key=lambda c: c[0])
     batch = candidates[:limit]
 
-    click.echo(f'{len(candidates)} component(s) incomplete, {slow_lane} in the '
-               f'slow lane (>={MISS_LIMIT} empty tries, retried every '
-               f'{COLD_RETRY_DAYS}d); enriching {len(batch)}')
+    click.echo(f'{len(candidates)} component(s) never attempted, {slow_lane} '
+               f'already attempted (manual retry only); enriching {len(batch)}')
     if dry_run:
         for _, component, missing in batch:
             click.echo(f'  would try #{component.id} {component.name[:44]} '
@@ -172,6 +184,7 @@ def enrich_nightly(limit, dry_run):
             # An error is not evidence the part is unenrichable, so it does not
             # count as a miss - only a clean empty result does.
             continue
+        ai_gate.record(component.id, 'enrich', manual=False)
 
         still = _wants(component)
         gained = [m for m in missing if m not in still]
