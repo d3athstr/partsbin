@@ -56,14 +56,36 @@ def _save_state(state):
     os.replace(tmp, STATE_PATH)  # never leave a half-written state file
 
 
+# Never on the web (2026-10-03): our own PCBs and 3D prints have no product
+# photo or published drawing - their image and dimensions come from our own
+# KiCad/CAD files. Kits/assortments have no single datasheet, and wire, tubing
+# and fabric have no "dimensions" a board is drafted around.
+IN_HOUSE_MARKERS = ('in-house', 'empire12', 'techtaria')
+KIT_MARKERS = (' kit', 'assortment', 'broken out')
+NO_DIMENSION_CATEGORIES = ('Wire & Cable',)
+
+
+def _in_house(component):
+    maker = (component.manufacturer or '').lower()
+    name = (component.name or '').lower()
+    return (any(m in maker for m in IN_HOUSE_MARKERS)
+            or name.startswith('3d-printed')
+            or (component.category == 'Prototyping' and ' pcb' in name))
+
+
 def _wants(component):
-    """What this component is still missing, as a list of labels."""
+    """What this component is still missing AND could plausibly get from the web."""
+    if _in_house(component):
+        return []
+    name = ' ' + (component.name or '').lower()
     missing = []
     if not component.image:
         missing.append('image')
-    if not component.datasheet_url and component.category not in NO_DATASHEET_CATEGORIES:
+    if (not component.datasheet_url and component.category not in NO_DATASHEET_CATEGORIES
+            and not any(m in name for m in KIT_MARKERS)):
         missing.append('datasheet')
-    if component.category not in STANDARD_PACKAGE_CATEGORIES:
+    if (component.category not in STANDARD_PACKAGE_CATEGORIES
+            and component.category not in NO_DIMENSION_CATEGORIES):
         specs = component.specs or {}
         if not any(k.startswith('dim_') for k in specs):
             missing.append('dimensions')

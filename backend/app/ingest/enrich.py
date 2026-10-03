@@ -171,7 +171,43 @@ IMAGE_TYPES = {
     'image/gif': 'gif',
 }
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-HTTP_HEADERS = {'User-Agent': 'Mozilla/5.0 (PartsBin inventory; +https://parts.example.com)'}
+# A browser-like identity (2026-10-03). The old "PartsBin inventory" UA was
+# refused or tarpitted by manufacturer sites (st.com timed out, then served the
+# PDF to a browser UA), so datasheets Claude had already found - and paid for -
+# were thrown away as "not a PDF".
+HTTP_HEADERS = {
+    'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                   '(KHTML, like Gecko) Chrome/128.0 Safari/537.36'),
+    'Accept': 'application/pdf,image/*,text/html;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
+
+# Distributor/manufacturer datasheet hosts whose bot protection refuses ANY
+# server-side fetch (Mouser 403s even a browser UA) but which open fine in the
+# user's browser. A datasheet URL on one of these is kept when the check is
+# blocked (403/429/timeout) - not when it is a 404, which means a wrong URL.
+BLOCKING_DATASHEET_HOSTS = (
+    'mouser.com', 'digikey.com', 'lcsc.com', 'st.com', 'ti.com', 'onsemi.com',
+    'nxp.com', 'microchip.com', 'analog.com', 'vishay.com', 'murata.com',
+    'yageo.com', 'samsungsem.com', 'nichicon.co.jp', 'espressif.com',
+    'seeedstudio.com', 'arrow.com', 'farnell.com', 'newark.com', 'rs-online.com',
+)
+
+# One JSON line per enrichment: what Claude proposed and what was accepted or
+# rejected, and why. Before this a rejected URL left no trace at all.
+ENRICH_RESULT_LOG = os.getenv('PARTSBIN_ENRICH_RESULT_LOG',
+                              '/var/log/partsbin/enrich-results.log')
+
+
+def _log_result(record):
+    try:
+        from datetime import datetime, timezone
+        record = {'ts': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+                  'app': 'partsbin', 'event': 'enrich_result', **record}
+        with open(ENRICH_RESULT_LOG, 'a') as f:
+            f.write(json.dumps(record, separators=(',', ':')) + '\n')
+    except Exception:
+        pass
 
 
 def _url_is_safe(url):
@@ -243,19 +279,42 @@ def _download_image(component, url):
     return os.path.join(rel_dir, filename)
 
 
-def _datasheet_ok(url):
-    """Cheap validation that the URL really serves a PDF"""
+def _blocking_host(url):
+    host = (urlparse(url).hostname or '').lower()
+    return any(host == h or host.endswith('.' + h) for h in BLOCKING_DATASHEET_HOSTS)
+
+
+def _datasheet_check(url):
+    """(ok, reason). Accepts a served PDF, or a bot-blocked fetch on a known
+    datasheet host (the link works in a browser even when the server can't
+    fetch it). A 404 or an HTML page from an open host is rejected."""
     if not _url_is_safe(url):
-        return False
+        return False, 'unsafe-url'
     try:
         resp = requests.get(url, headers=HTTP_HEADERS, timeout=15, stream=True)
-        if resp.status_code != 200:
-            return False
-        if 'pdf' in (resp.headers.get('Content-Type') or '').lower():
-            return True
-        return resp.raw.read(5, decode_content=True).startswith(b'%PDF')
+    except requests.Timeout:
+        return (True, 'blocked-timeout-trusted-host') if _blocking_host(url) else (False, 'timeout')
+    except Exception as e:
+        return False, f'error:{type(e).__name__}'
+    if resp.status_code in (401, 403, 429) and _blocking_host(url):
+        return True, f'blocked-{resp.status_code}-trusted-host'
+    if resp.status_code != 200:
+        return False, f'http-{resp.status_code}'
+    if 'pdf' in (resp.headers.get('Content-Type') or '').lower():
+        return True, 'pdf'
+    try:
+        if resp.raw.read(5, decode_content=True).startswith(b'%PDF'):
+            return True, 'pdf-magic'
     except Exception:
-        return False
+        pass
+    # LCSC and similar wrap the PDF in an HTML viewer page; fine for a person.
+    if _blocking_host(url) and '/datasheet' in url.lower():
+        return True, 'html-viewer-trusted-host'
+    return False, 'not-pdf'
+
+
+def _datasheet_ok(url):
+    return _datasheet_check(url)[0]
 
 
 def enrich_component(component_id, force=False):
@@ -282,6 +341,10 @@ def enrich_component(component_id, force=False):
     image_candidates = assets.get('image_urls') or []
     if assets.get('image_url'):  # tolerate old single-URL shape
         image_candidates.append(assets['image_url'])
+    trace = {'component_id': component.id, 'name': component.name[:80],
+             'proposed_images': image_candidates[:3],
+             'proposed_datasheet': assets.get('datasheet_url'),
+             'image_rejects': []}
     if not component.image:
         for url in image_candidates[:3]:
             try:
@@ -293,9 +356,12 @@ def enrich_component(component_id, force=False):
                 component.image = rel_path
                 result['image'] = True
                 break
+            trace['image_rejects'].append(url)
 
     if not component.datasheet_url and assets.get('datasheet_url'):
-        if _datasheet_ok(assets['datasheet_url']):
+        ok, reason = _datasheet_check(assets['datasheet_url'])
+        trace['datasheet_check'] = reason
+        if ok:
             component.datasheet_url = assets['datasheet_url'][:500]
             result['datasheet'] = True
 
@@ -315,6 +381,10 @@ def enrich_component(component_id, force=False):
                 result['specs'] += 1
         if result['specs']:
             component.specs = specs
+
+    trace['dims_found'] = sorted(k for k in (assets.get('specs') or {}) if str(k).startswith('dim_'))
+    trace['result'] = result
+    _log_result(trace)
 
     if any(result.values()):
         db.session.commit()
